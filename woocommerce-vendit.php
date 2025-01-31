@@ -10,3 +10,10 @@
  * GitHub Plugin URI: https://github.com/pdk-online-succes/woocommerce-vendit
  * GitHub Languages:  https://github.com/pdk-online-succes/woocommerce-vendit-translations
  */
+ 
+
+<?php
+
+echo "Hello World";
+
+?>
