@@ -12,6 +12,4 @@
  * GitHub Languages:  https://github.com/pdk-online-succes/woocommerce-vendit-translations
  */
 
-echo "Hello World";
-
 ?>
