@@ -1,0 +1,16 @@
+{
+	"name": "PDK-Online-Succes/woocommerce-vendit",
+	"description": "",
+	"keywords": ["wordpress", "plugin"],
+	"homepage": "https://github.com/PDK-Online-Succes/woocommerce-vendit",
+	"authors": [
+	  {
+		"name": "PDK Online Succes",
+		"homepage": "https://pdk.nl"
+	  }
+	],
+	"type": "wordpress-plugin",
+	"require": {
+	  "php": ">=7.4"
+	}
+  }
