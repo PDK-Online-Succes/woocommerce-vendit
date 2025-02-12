@@ -1,2 +1,2 @@
 <?php //Silence is golden 
-echo "Hello World";	
+echo "Hello World 2";	
