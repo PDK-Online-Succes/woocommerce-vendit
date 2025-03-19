@@ -1,0 +1,41 @@
+<?php return array(
+    'root' => array(
+        'name' => '__root__',
+        'pretty_version' => 'dev-develop',
+        'version' => 'dev-develop',
+        'reference' => '2b5665379fe4b664bc5fd546eb9723414f6d1be3',
+        'type' => 'library',
+        'install_path' => __DIR__ . '/../../',
+        'aliases' => array(),
+        'dev' => true,
+    ),
+    'versions' => array(
+        '__root__' => array(
+            'pretty_version' => 'dev-develop',
+            'version' => 'dev-develop',
+            'reference' => '2b5665379fe4b664bc5fd546eb9723414f6d1be3',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../../',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'automattic/woocommerce' => array(
+            'pretty_version' => '3.1.0',
+            'version' => '3.1.0.0',
+            'reference' => 'd3b292f04c0b3b21dced691ebad8be073a83b4ad',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../automattic/woocommerce',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+        'symfony/dotenv' => array(
+            'pretty_version' => 'v6.4.16',
+            'version' => '6.4.16.0',
+            'reference' => '1ac5e7e7e862d4d574258daf08bd569ba926e4a5',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../symfony/dotenv',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
+    ),
+);

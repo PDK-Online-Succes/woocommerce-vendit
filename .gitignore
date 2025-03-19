@@ -1,1 +1,6 @@
+#Ignore .env
+.env
 
+#Ignore
+import/*
+export/*
