@@ -1,6 +1,6 @@
 {
     "require": {
         "automattic/woocommerce": "^3.1",
-        "symfony/dotenv": "^6.4"
+        "vlucas/phpdotenv": "^5.6"
     }
 }
