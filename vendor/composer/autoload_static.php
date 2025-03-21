@@ -18,10 +18,16 @@ class ComposerStaticInitcd53d4cc421fe0b70226223f299ac0ad
             'Symfony\\Polyfill\\Php80\\' => 23,
             'Symfony\\Polyfill\\Mbstring\\' => 26,
             'Symfony\\Polyfill\\Ctype\\' => 23,
+            'Symfony\\Component\\DomCrawler\\' => 29,
+            'Symfony\\Component\\CssSelector\\' => 30,
         ),
         'P' => 
         array (
             'PhpOption\\' => 10,
+        ),
+        'M' => 
+        array (
+            'Masterminds\\' => 12,
         ),
         'G' => 
         array (
@@ -50,9 +56,21 @@ class ComposerStaticInitcd53d4cc421fe0b70226223f299ac0ad
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-ctype',
         ),
+        'Symfony\\Component\\DomCrawler\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/dom-crawler',
+        ),
+        'Symfony\\Component\\CssSelector\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/symfony/css-selector',
+        ),
         'PhpOption\\' => 
         array (
             0 => __DIR__ . '/..' . '/phpoption/phpoption/src/PhpOption',
+        ),
+        'Masterminds\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/masterminds/html5/src',
         ),
         'GrahamCampbell\\ResultType\\' => 
         array (
