@@ -3,14 +3,11 @@ error_reporting(E_ALL);
 
 require __DIR__ . '/vendor/autoload.php';
 
-//use Symfony\Component\Dotenv\Dotenv;
 use Dotenv\Dotenv;
 use Automattic\WooCommerce\Client;
 
-//var_dump(dirname(__DIR__));
-
-//$dotenv = new Dotenv();
-//$dotenv->load(dirname(__DIR__).'/.env');
+include_once 'includes/functions.php';
+include_once 'includes/sanitization.php';
 
 $dotenv = Dotenv::createImmutable(dirname(__DIR__));
 $dotenv->load();
@@ -22,11 +19,6 @@ if (! function_exists('evalBool')) {
 		return (strcasecmp($value, 'true') ? false : true);
 	}
 }
-
-// $dotenv = Dotenv\Dotenv::createImmutable(dirname(__DIR__));
-// $dotenv->load();
-//$dotenv->required('DEBUG')->isBoolean();
-//$dotenv->ifPresent('DEBUG')->isBoolean();
 
 $woocommerce = new Client(
     $_ENV['SiteURL'], // Your store URL
@@ -64,7 +56,7 @@ function fetch_wordpress_data($endpoint, $params = []) {
         $data = json_decode($response, true);
         
         // Return the data if available
-        return $data ?: false;
+        return $data;
     } else {
         // Handle errors (non-2xx response code)
         return [
@@ -73,26 +65,6 @@ function fetch_wordpress_data($endpoint, $params = []) {
             'response' => $response
         ];
     }
-}
-
-if(!function_exists('convertToASCII')){
-	function sanitize_slug($string) {
-		// Convert to ASCII
-		$string = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $string);
-		// Remove any remaining non-ASCII characters
-		$string = preg_replace('/[^\x20-\x7E]/', '', $string);
-		// Optionally replace special characters with underscores
-		$string = preg_replace('/[^A-Za-z0-9_\-\.]/', '_', $string);
-		//convert to UTF-8
-		$string = iconv('ASCII', 'UTF-8//TRANSLIT//IGNORE', $string);
-		// Replace multiple underscores with a single underscore
-		$string = preg_replace('/_+/', '_', $string);
-		return $string;
-	}
-}
-
-function sanitize_text($text) {
-    return trim(htmlspecialchars($text, ENT_QUOTES, 'UTF-8')); // Safe alternative
 }
 
 function get_category_by_guid($woocommerce, $guid){
@@ -111,22 +83,73 @@ function get_category_by_guid($woocommerce, $guid){
 	return false;
 }
 
+function get_brand($woocommerce, $brand){
+	$params = [
+		'search' => $brand
+	];
 
-$params = [
-    'search' => 'woocommerce-placeholder.png',  // Search by filename
-    'per_page' => 10  // Limit the number of results
-];
-
-$media = fetch_wordpress_data('media', $params);
-
-if ($media) {
-    echo "Media found:\n";
-	echo "<pre>";
-    print_r($media);
-	echo "</pre>";	
-} else {
-    echo "No media found.";
+	//Send get Request
+	try {
+		$response = $woocommerce->get('products/brands', $params);
+		//evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT));
+		return $response;
+	} catch (Exception $e) {
+		error_log("[ERROR][GET] API Request Failed: " . $e->getMessage());
+	}
+	return false;
 }
+
+function create_brand($woocommerce, $brand){
+	//print_r($xml);
+	$data = array_filter([
+		'name' => !empty($brand) ? sanitize_text($brand) : ''
+	], function($value) {
+		return $value !== '' && $value !== null;
+	});
+
+	//Send create request
+	try {
+        $response = $woocommerce->post('products/brands', $data);
+        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT));
+		return $response;
+    } catch (Exception $e) {
+        error_log("[ERROR][POST] API Request Failed: " . $e->getMessage());
+    }
+	return false;
+}
+
+
+function url_origin( $s, $use_forwarded_host = false )
+{
+    $ssl      = ( ! empty( $s['HTTPS'] ) && $s['HTTPS'] == 'on' );
+    $sp       = strtolower( $s['SERVER_PROTOCOL'] );
+    $protocol = substr( $sp, 0, strpos( $sp, '/' ) ) . ( ( $ssl ) ? 's' : '' );
+    $port     = $s['SERVER_PORT'];
+    $port     = ( ( ! $ssl && $port=='80' ) || ( $ssl && $port=='443' ) ) ? '' : ':'.$port;
+    $host     = ( $use_forwarded_host && isset( $s['HTTP_X_FORWARDED_HOST'] ) ) ? $s['HTTP_X_FORWARDED_HOST'] : ( isset( $s['HTTP_HOST'] ) ? $s['HTTP_HOST'] : null );
+    $host     = isset( $host ) ? $host : $s['SERVER_NAME'] . $port;
+    return $protocol . '://' . $host;
+}
+
+// $params = [
+//     'search' => 'F068FA60-34F7-4093-8F35-0E873095A33E_7004-0_18.png',  // Search by filename
+//     'per_page' => 10  // Limit the number of results
+// ];
+
+// $media = fetch_wordpress_data('media', $params);
+
+// if ($media) {
+//     echo "Media found:\n";
+// 	echo "<pre>";
+// 	echo "{$media[0]['id']}";
+//     print_r($media);
+// 	echo "</pre>";	
+// } else {
+//     echo "No media found.";
+// 	echo "<pre>";
+//     print_r($media);
+// 	echo "</pre>";	
+// }
 
 
 ?>

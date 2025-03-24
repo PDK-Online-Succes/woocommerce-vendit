@@ -1,6 +1,5 @@
 <?php 
 require_once  __DIR__ . '/init.php';
-
 if (file_exists(__DIR__ . '/import/Groups.xml')) {
 	$xml = XmlReader::open(__DIR__ . '/import/Groups.xml');
 	$xml = simplexml_load_file(__DIR__ . '/import/Groups.xml');
@@ -48,17 +47,17 @@ function recursive_subgroup($woocommerce, $xml){
 		}
 		//print_r($group);
 		recursive_subgroup($woocommerce, $group);
-		return $group->GroupName->__toString();
 	}
 	
+	return $group->GroupName->__toString();
 }
 
 function create_categorie($woocommerce, $xml, $parent = 0){
 	//print_r($xml);
+	//'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
 	$data = array_filter([
 		'name'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
 		'parent' 					=> !empty($parent) 						? intval($parent) 											: '',
-        'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
         'description' 				=> !empty($xml->GroupDescription) 		? sanitize_text($xml->GroupDescription->__toString()) 		: '',
         'menu_order'  				=> !empty($xml->ItemOrder) 				? (int) $xml->ItemOrder->__toString() 						: '',
         'rank_math_title'  			=> !empty($xml->GroupMetaTitle) 		? sanitize_text($xml->GroupMetaTitle->__toString()) 		: '',
@@ -81,9 +80,9 @@ function create_categorie($woocommerce, $xml, $parent = 0){
 function update_categorie($woocommerce, $xml, $id) {
     // Ensure data is properly sanitized
 	$group_guid = !empty($xml->GroupGuid) ? sanitize_text($xml->GroupGuid->__toString()) : '';
+	// 'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
 	$data = array_filter([
         'name'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
-        'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
         'description' 				=> !empty($xml->GroupDescription) 		? sanitize_text($xml->GroupDescription->__toString()) 		: '',
         'menu_order'  				=> !empty($xml->ItemOrder) 				? (int) $xml->ItemOrder->__toString() 						: '',
         'rank_math_title'  			=> !empty($xml->GroupMetaTitle) 		? sanitize_text($xml->GroupMetaTitle->__toString()) 		: '',
