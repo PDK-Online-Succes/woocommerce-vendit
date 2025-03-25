@@ -5,19 +5,28 @@ require_once  __DIR__ . '/init.php';
 if (file_exists(__DIR__ . '/import/Products.xml')) {
 	$xml = XmlReader::open(__DIR__ . '/import/Products.xml');
 	$xml = simplexml_load_file(__DIR__ . '/import/Products.xml');
+	global $create;
+	$create=0;
+	$update=0;
+	$delete=0;
+	$total=0;
 	$i=0;
 	foreach ($xml->Products->Product as $item ){
+		$total++;
 		$EcommerceProductGuid = $item->EcommerceProductGuid->__toString();
 		$product = get_product_by_guid($woocommerce, $EcommerceProductGuid);
 		if(!$product){
+			$create++;
 			//Create product
 			create_product($woocommerce, $item);
 		} else {
 			if($item->IsDeleted->__toString() === "False"){
+				$update++;
 				$product = $woocommerce->get("products/{$product[0]->id}");
 				//Update product with $product[0]->id
 				update_product($woocommerce, $item, $product->id);
 			} else {
+				$delete++;
 				//Delete product with $product[0]->id
 				$woocommerce->delete("products/{$product[0]->id}", ['force' => true]);
 			}
@@ -25,44 +34,11 @@ if (file_exists(__DIR__ . '/import/Products.xml')) {
 		$i++; 
 		//if($i == 10) break;
 	}
-
+	error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>");
 }
 
-// function get_product_by_guid($woocommerce, $guid){
-// 	$params = [
-// 		'EcommerceProductGuid' => "{$guid}"
-// 	];
-
-// 	evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] Input GUID: " . json_encode($params, JSON_PRETTY_PRINT));
-// 	//Send get Request
-// 	try {
-// 		$response = $woocommerce->get('products', $params);
-// 		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] Get Product By GUID: " . json_encode($response, JSON_PRETTY_PRINT));
-// 		return $response;
-// 	} catch (Exception $e) {
-// 		error_log("[ERROR][GET] API Request Failed: " . $e->getMessage());
-// 	}
-	
-// 	return false;
-// }
-
-// function get_product_variation_by_guid($woocommerce, $product_id, $guid){
-// 	$params = [
-// 		'EcommerceProductVariationGuid' => "{$guid}"
-// 	];
-// 	evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] Input GUID: " . json_encode($params, JSON_PRETTY_PRINT));
-// 	//Send get Request
-// 	try {
-// 		$response = $woocommerce->get("products/{$product_id}/variations", $params);
-// 		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] Get Variation By GUID: " . json_encode($response, JSON_PRETTY_PRINT));
-// 		return $response;
-// 	} catch (Exception $e) {
-// 		error_log("[ERROR][GET] API Request Failed: " . $e->getMessage());
-// 	}
-// 	return false;
-// }
-
 function create_product($woocommerce, $xml){
+	global $create;
 	 $data = [
 		'name'        				=> !empty($xml->Description) 				? sanitize_text($xml->Description->__toString()) 				: '',
 		'description' 				=> !empty($xml->ProductDescription) 		? sanitize_html($xml->BigInfo->__toString()) 					: '',
@@ -74,9 +50,13 @@ function create_product($woocommerce, $xml){
         'rank_math_focus_keyword'  	=> !empty($xml->MetaKeywords) 			? sanitize_text($xml->MetaKeywords->__toString()) 			: '',
         'rank_math_description'  	=> !empty($xml->MetaDescription) 		? sanitize_text($xml->MetaDescription->__toString())		: '',
 	];
-	if(!$xml->ProductVariations) return error_log("[ERROR] No Variations Found: ".print_r($xml,true)); 
+	if(!$xml->ProductVariations) { 
+		$create--;
+		return error_log( "[ERROR] No Variations Found: " . print_r( $xml, true ) );
+	}
+
 	$count = $xml->ProductVariations->ProductVariation->count();
-	echo "Count: {$count}<br>";
+	echo "Variation Count: {$count}<br>";
 
 	if($xml->Brand){
 		$brand = get_brand($woocommerce, $xml->Brand->__toString());
@@ -106,25 +86,6 @@ function create_product($woocommerce, $xml){
 		}
 	}
 
-	// if($xml->Specs){
-	// 	foreach($xml->Specs->Spec as $spec){
-	// 		$attribute = get_attribute_by_name($woocommerce, $spec->Name->__toString());
-	// 		if(!$attribute){
-	// 			$attribute = create_attribute($woocommerce, $spec->Name->__toString());
-	// 		}
-	// 		$term = get_attribute_term_by_name($woocommerce, (is_array($attribute) ? $attribute[0]->id : $attribute->id), $spec->Value->__toString());
-	// 		if(!$term){
-	// 			$term = create_attribute_term($woocommerce, (is_array($attribute) ? $attribute[0]->id : $attribute->id), $spec->Value->__toString());
-	// 		}
-	// 		$data['attributes'][] = [
-	// 			'id' => is_array($attribute) ? $attribute[0]->id : $attribute->id,
-	// 			'visible' => true,
-	// 			'options' => [
-	// 				is_array($term) ? $term[0]->name : $term->name
-	// 			]
-	// 		];
-	// 	}
-	// }
 	$combined_images = get_combined_images_from_xml($xml);
 	$current_images = $product->images ?? [];
 
@@ -134,35 +95,6 @@ function create_product($woocommerce, $xml){
 	if (empty($combined_images) && !empty($current_images)) {
 		$data['images'] = [];
 	}
-	// foreach ($xml->ProductVariations->ProductVariation as $variation){
-	// 	if($variation->Images->Image){
-	// 		foreach($variation->Images->Image as $img){
-
-	// 			$data['images'][] = get_images($img);
-
-	// 		}
-	// 	}
-		// if($variation->Attributes){
-		// 	foreach($variation->Attributes->Attribute as $attr){
-		// 		$attribute = get_attribute_by_name($woocommerce, $attr->Name->__toString());
-		// 		if(!$attribute){
-		// 			$attribute = create_attribute($woocommerce, $attr->Name->__toString());
-		// 		}
-		// 		$term = get_attribute_term_by_name($woocommerce, is_array($attribute) ? $attribute[0]->id : $attribute->id, $attr->Value->__toString());
-		// 		if(!$term){
-		// 			$term = create_attribute_term($woocommerce, is_array($attribute) ? $attribute[0]->id : $attribute->id, $attr->Value->__toString());
-		// 		}
-		// 		$data['attributes'][] = [
-		// 			'id' => is_array($attribute) ? $attribute[0]->id : $attribute->id,
-		// 			'visible' => true,
-		// 			'variation' => true,
-		// 			'options' => [
-		// 				is_array($term) ? $term[0]->name : $term->name
-		// 			]
-		// 		];
-		// 	}
-		// }
-	//}
 
 	$data['attributes'] = build_combined_attributes_from_xml($xml, $woocommerce);
 
@@ -288,7 +220,7 @@ function update_product($woocommerce, $xml, $product_id){
 
 	if(!$xml->ProductVariations) return "Error No ProductVariations";
 	$count = $xml->ProductVariations->ProductVariation->count();
-	echo "Count: {$count}<br>";
+	echo "Variation Count: {$count}<br>";
 
 	if($xml->Brand){
 		$brand = get_brand($woocommerce, $xml->Brand->__toString());
@@ -349,40 +281,6 @@ function update_product($woocommerce, $xml, $product_id){
 			$data['meta_data'] = $meta_data;
 		}
 	}
-
-	// if ($xml->Specs) {
-	// 	$attributes = [];
-	
-	// 	foreach ($xml->Specs->Spec as $spec) {
-	// 		$attribute = get_attribute_by_name($woocommerce, (string) $spec->Name);
-	// 		if (!$attribute) {
-	// 			$attribute = create_attribute($woocommerce, (string) $spec->Name);
-	// 		}
-	
-	// 		$attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-	// 		$attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
-	
-	// 		$term = get_attribute_term_by_name($woocommerce, $attribute_id, (string) $spec->Value);
-	// 		if (!$term) {
-	// 			$term = create_attribute_term($woocommerce, $attribute_id, (string) $spec->Value);
-	// 		}
-	
-	// 		$term_name = is_array($term) ? $term[0]->name : $term->name;
-	
-	// 		$attributes[] = [
-	// 			'id' => $attribute_id,
-	// 			'name' => $attribute_name, // Just in case, some WooCommerce installs need it
-	// 			'visible' => true,
-	// 			'variation' => false,
-	// 			'options' => [ $term_name ]
-	// 		];
-	// 	}
-	
-	// 	// Only update if attributes have changed
-	// 	if (attributes_changed($product->attributes, $attributes)) {
-	// 		$data['attributes'] = $attributes;
-	// 	}
-	// }
 	$combined_images = get_combined_images_from_xml($xml);
 	$current_images = $product->images ?? [];
 
@@ -392,74 +290,14 @@ function update_product($woocommerce, $xml, $product_id){
 	if (empty($combined_images) && !empty($current_images)) {
 		$data['images'] = [];
 	}
-	// foreach ($xml->ProductVariations->ProductVariation as $variation){
-	// 	if ($variation->Images->Image) {
-	// 		$new_images = [];
-		
-	// 		foreach ($variation->Images->Image as $img) {
-	// 			$image_data = get_images($img);
-	// 			$image_data['position'] = (int)$img['ImageOrder']; // Keep order
-	// 			$new_images[] = $image_data;
-	// 		}
-		
-	// 		$current_images = $product->images ?? [];
-		
-	// 		if (images_changed($current_images, $new_images)) {
-	// 			$data['images'] = $new_images;
-	// 		}
-	// 	} else {
-	// 		// No images in XML — clear images if product has any
-	// 		$current_images = $product->images ?? [];
-		
-	// 		if (!empty($current_images)) {
-	// 			$data['images'] = [];
-	// 		}
-	// 	}
-		// if ($variation->Attributes) {
-		// 	$variation_attributes = [];
-		
-		// 	foreach ($variation->Attributes->Attribute as $attr) {
-		// 		$attribute = get_attribute_by_name($woocommerce, (string)$attr->Name);
-		// 		if (!$attribute) {
-		// 			$attribute = create_attribute($woocommerce, (string)$attr->Name);
-		// 		}
-		
-		// 		$attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-		// 		$attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
-		
-		// 		$term = get_attribute_term_by_name($woocommerce, $attribute_id, (string)$attr->Value);
-		// 		if (!$term) {
-		// 			$term = create_attribute_term($woocommerce, $attribute_id, (string)$attr->Value);
-		// 		}
-		
-		// 		$term_name = is_array($term) ? $term[0]->name : $term->name;
-		
-		// 		$variation_attributes[] = [
-		// 			'id' => $attribute_id,
-		// 			'name' => $attribute_name,
-		// 			'visible' => true,
-		// 			'variation' => true,
-		// 			'options' => [$term_name]
-		// 		];
-		// 	}
-		
-		// 	// Compare with current variation attributes
-		// 	if (attributes_changed($product->attributes, $variation_attributes)) {
-		// 		$data['attributes'] = $variation_attributes;
-		// 	}
-		// }
-	//}
-	// Deduplicate the images by `src` values
-	// if (isset($data['images']) && is_array($data['images'])) {
-	// 	$data['images'] = array_unique($data['images'], SORT_REGULAR);
-	// }
 
-	$combined_attributes = build_combined_attributes_from_xml($xml, $woocommerce);
+	$combined_attributes = build_combined_attributes_from_xml($xml, $woocommerce);	
 	if (attributes_changed($product->attributes, $combined_attributes)) {
 		$data['attributes'] = $combined_attributes;
+		//print_r($data['attributes']);
 	}
 
-	//print_r($data['images']);
+	//print_r($combined_attributes);
 
 	//check if ProductVariation is only one or multiple
 	if($count > 1){
@@ -482,7 +320,7 @@ function update_product($woocommerce, $xml, $product_id){
 				if(!$variation_check && $variation->IsDeleted->__toString() === "False"){
 					//Create ProductVariation
 					create_product_variation($woocommerce, $variation, $response->id, $response->sku, $primary_category_name, $xml->StockProduct->__toString());
-				} else {
+				} elseif ($variation_check) {
 					if($variation->IsDeleted->__toString() === "True"){
 						$woocommerce->delete("products/{$response->id}/variations/{$variation_check[0]->id}", ['force' => true]);
 					} else {
@@ -785,108 +623,13 @@ function build_combined_attributes_from_xml($xml, $woocommerce) {
             'id' => $attribute_id,
             'name' => $attribute_name,
             'visible' => true,
-            'variation' => true,
+            'variation' => $attribute_name != "Kleur",
             'options' => $term_names
         ];
     }
-
+	evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Attributes: " . json_encode($attributes, JSON_PRETTY_PRINT));
     return $attributes;
 }
-
-// function build_combined_attributes_from_xml($xml, $woocommerce) {
-//     $attributes = [];
-//     $variation_attribute_map = [];
-
-// 	 // STEP 0: Get primary category name from Default="True"
-// 	 $primary_category_name = null;
-
-// 	 foreach ($xml->Groups->ProductGroup as $group) {
-// 		 if ((string) $group['Default'] === 'True') {
-// 			 $category = get_category_by_guid($woocommerce, (string)$group);
-// 			 if ($category && isset($category[0])) {
-// 				 $primary_category_name = $category[0]->name;
-// 			 }
-// 			 break;
-// 		 }
-// 	 }
-
-//     // STEP 1: Specs (non-variation)
-//     if ($xml->Specs) {
-//         foreach ($xml->Specs->Spec as $spec) {
-//             $name = map_attribute_name((string) $spec->Name, $primary_category_name);
-//             $value = (string) $spec->Value;
-
-//             $attribute = get_attribute_by_name($woocommerce, $name);
-//             if (!$attribute) {
-//                 $attribute = create_attribute($woocommerce, $name);
-//             }
-
-//             $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-//             $attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
-
-//             $term = get_attribute_term_by_name($woocommerce, $attribute_id, $value);
-//             if (!$term) {
-//                 $term = create_attribute_term($woocommerce, $attribute_id, $value);
-//             }
-
-//             $term_name = is_array($term) ? $term[0]->name : $term->name;
-
-//             $attributes[] = [
-//                 'id' => $attribute_id,
-//                 'name' => $attribute_name,
-//                 'visible' => true,
-//                 'variation' => false,
-//                 'options' => [$term_name]
-//             ];
-//         }
-//     }
-
-//     // STEP 2: Variation attributes
-//     if ($xml->ProductVariations && $xml->ProductVariations->ProductVariation) {
-//         foreach ($xml->ProductVariations->ProductVariation as $variation) {
-//             if ($variation->Attributes) {
-//                 foreach ($variation->Attributes->Attribute as $attr) {
-//                     $attr_name = map_attribute_name((string) $attr->Name, $primary_category_name);
-//                     $attr_value = (string) $attr->Value;
-//                     $variation_attribute_map[$attr_name][] = $attr_value;
-//                 }
-//             }
-//         }
-//     }
-
-//     foreach ($variation_attribute_map as $name => $values) {
-//         $attribute = get_attribute_by_name($woocommerce, $name);
-//         if (!$attribute) {
-//             $attribute = create_attribute($woocommerce, $name);
-//         }
-
-//         $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-//         $attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
-
-//         $term_names = [];
-//         foreach (array_unique($values) as $value) {
-//             $term = get_attribute_term_by_name($woocommerce, $attribute_id, $value);
-//             if (!$term) {
-//                 $term = create_attribute_term($woocommerce, $attribute_id, $value);
-//             }
-//             $term_names[] = is_array($term) ? $term[0]->name : $term->name;
-//         }
-
-//         // Prevent duplicates
-//         $already_exists = array_filter($attributes, fn($a) => $a['id'] == $attribute_id);
-//         if (!$already_exists) {
-//             $attributes[] = [
-//                 'id' => $attribute_id,
-//                 'name' => $attribute_name,
-//                 'visible' => true,
-//                 'variation' => true,
-//                 'options' => $term_names
-//             ];
-//         }
-//     }
-
-//     return $attributes;
-// }
 
 function attributes_changed($current_attributes, $new_attributes) {
     if (count($current_attributes) !== count($new_attributes)) {
