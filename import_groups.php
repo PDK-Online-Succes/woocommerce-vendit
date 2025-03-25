@@ -10,15 +10,11 @@ if (file_exists(__DIR__ . '/import/Groups.xml')) {
 		$category = get_category_by_guid($woocommerce, $group_guid);
 		if(!$category){
 			//Create categorie
-			//echo "Group Guid: {$group_guid} <br>";
 			create_categorie($woocommerce, $group, $parent = 0);
 		} else {
 			//Update categorie with $category[0]->id
-			//echo "Group Guid: {$group_guid} Cat ID: {$category[0]->id}<br>";
-			//print_r($group);
 			update_categorie($woocommerce, $group, $category[0]->id);
 		}
-
 		//Delve Deeper for sub Categories
 		recursive_subgroup($woocommerce, $group);
 	}
@@ -28,33 +24,26 @@ function recursive_subgroup($woocommerce, $xml){
 	//Check if we have reached the bottom
 	if( !$xml->SubGroups->Group ) return error_log("We have reached the bottom.");
 	foreach($xml->SubGroups->Group as $group){
-		//print_r($group);
 		$group_guid = $group->GroupGuid->__toString();
 		$category = get_category_by_guid($woocommerce, $group_guid);
-		//print_r($category);
 
 		if(!$category){
 			//Get the parent id with parent_guid
 			$parent_guid = $group->Parent_Guid->__toString();
 			$category = get_category_by_guid($woocommerce, $parent_guid);
-			//echo "Parent Guid: {$parent_guid} Parent ID: {$category[0]->id}<br>";
 			//Create subcategorie
 			create_categorie($woocommerce, $group, $category[0]->id);
 		} else {
 			//Update subcategorie with $category[0]->id
-			//echo "Group Guid: {$group_guid} Cat ID: {$category[0]->id}<br>";
 			update_categorie($woocommerce, $group, $category[0]->id);
 		}
 		//print_r($group);
 		recursive_subgroup($woocommerce, $group);
 	}
-	
 	return $group->GroupName->__toString();
 }
 
 function create_categorie($woocommerce, $xml, $parent = 0){
-	//print_r($xml);
-	//'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
 	$data = array_filter([
 		'name'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
 		'parent' 					=> !empty($parent) 						? intval($parent) 											: '',
@@ -67,7 +56,6 @@ function create_categorie($woocommerce, $xml, $parent = 0){
 	], function($value) {
 		return $value !== '' && $value !== null;
 	});
-
 	//Send create request
 	try {
         $response = $woocommerce->post('products/categories', $data);
@@ -78,22 +66,21 @@ function create_categorie($woocommerce, $xml, $parent = 0){
 }
 
 function update_categorie($woocommerce, $xml, $id) {
+	$taxonomy = $woocommerce->get("products/categories/{id}");
     // Ensure data is properly sanitized
-	$group_guid = !empty($xml->GroupGuid) ? sanitize_text($xml->GroupGuid->__toString()) : '';
-	// 'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
+	// 'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',	
 	$data = array_filter([
-        'name'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
-        'description' 				=> !empty($xml->GroupDescription) 		? sanitize_text($xml->GroupDescription->__toString()) 		: '',
-        'menu_order'  				=> !empty($xml->ItemOrder) 				? (int) $xml->ItemOrder->__toString() 						: '',
-        'rank_math_title'  			=> !empty($xml->GroupMetaTitle) 		? sanitize_text($xml->GroupMetaTitle->__toString()) 		: '',
-        'rank_math_focus_keyword'  	=> !empty($xml->GroupMetaKeywords) 		? sanitize_text($xml->GroupMetaKeywords->__toString()) 		: '',
-        'rank_math_description'  	=> !empty($xml->GroupMetaDescription) 	? sanitize_text($xml->GroupMetaDescription->__toString())	: '',
-    ], function($value) {
+		'name'        				=> (!empty($xml->GroupName) && $taxonomy->name != sanitize_text($xml->GroupName->__toString())) ? sanitize_text($xml->GroupName->__toString()) : '',
+		'description' 				=> (!empty($xml->GroupDescription) && $taxonomy->description != sanitize_text($xml->GroupDescription->__toString())) ? sanitize_text($xml->GroupDescription->__toString()) : '',
+		'menu_order'  				=> (!empty($xml->ItemOrder) && $taxonomy->menu_order != (int) $xml->ItemOrder->__toString()) ? (int) $xml->ItemOrder->__toString() : '',
+		'rank_math_title'			=> (!empty($xml->GroupMetaTitle) && $taxonomy->rank_math_title != sanitize_text($xml->GroupMetaTitle->__toString())) ? sanitize_text($xml->GroupMetaTitle->__toString()) : '',
+		'rank_math_focus_keyword'	=> (!empty($xml->GroupMetaKeywords) && $taxonomy->rank_math_focus_keyword != sanitize_text($xml->GroupMetaKeywords->__toString())) ? sanitize_text($xml->GroupMetaKeywords->__toString()) : '',
+		'rank_math_description'		=> (!empty($xml->GroupMetaDescription) && $taxonomy->rank_math_description != sanitize_text($xml->GroupMetaDescription->__toString())) 	? sanitize_text($xml->GroupMetaDescription->__toString()) : '',
+	], function($value) {
 		return $value !== '' && $value !== null;
 	});
 	//'group_guid' 	=> isset($xml->GroupGuid) ? sanitize_text($xml->GroupGuid->__toString()) : '',
-	//var_dump(empty($xml->GroupDescription->__toString()));
-	//var_dump($data);
+	if (empty($data)) return;
     //Send update request
     try {
         $response = $woocommerce->put("products/categories/{$id}", $data);
