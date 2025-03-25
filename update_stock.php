@@ -3,7 +3,6 @@
 require_once  __DIR__ . '/init.php';
 
 if (file_exists(__DIR__ . '/import/Stocks.xml')) {
-	$xml = XmlReader::open(__DIR__ . '/import/Stocks.xml');
 	$xml = simplexml_load_file(__DIR__ . '/import/Stocks.xml');
    //print_r($xml->Stocks->Stock);
    

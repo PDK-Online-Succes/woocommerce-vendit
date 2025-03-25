@@ -3,7 +3,6 @@
 require_once  __DIR__ . '/init.php';
 
 if (file_exists(__DIR__ . '/import/Products.xml')) {
-	$xml = XmlReader::open(__DIR__ . '/import/Products.xml');
 	$xml = simplexml_load_file(__DIR__ . '/import/Products.xml');
 	global $create;
 	$create=0;
@@ -456,11 +455,19 @@ function get_attribute_by_name($woocommerce, $name){
 }
 function get_attribute_term_by_name($woocommerce, $attribute_id, $term){
 	$params = [
-		'search' => $term
+		'search' => $term,
+		'per_page' => 1000
+		
 	];
 	$terms = $woocommerce->get("products/attributes/{$attribute_id}/terms", $params);
 
-	return $terms;
+	$filtered_terms = array_filter($terms, function($t) use ($term) {
+		return strtolower($t->name) === strtolower($term);
+	});
+	//Return term else empty array
+	// print_r(array_values($filtered_terms));
+	// die();
+	return array_values($filtered_terms);
 }
 
 function map_attribute_name($original_name, $primary_category_name) {

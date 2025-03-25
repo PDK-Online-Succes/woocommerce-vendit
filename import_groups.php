@@ -1,7 +1,6 @@
 <?php 
 require_once  __DIR__ . '/init.php';
 if (file_exists(__DIR__ . '/import/Groups.xml')) {
-	$xml = XmlReader::open(__DIR__ . '/import/Groups.xml');
 	$xml = simplexml_load_file(__DIR__ . '/import/Groups.xml');
    //print_r($xml->Groups->Group);
    
@@ -66,7 +65,7 @@ function create_categorie($woocommerce, $xml, $parent = 0){
 }
 
 function update_categorie($woocommerce, $xml, $id) {
-	$taxonomy = $woocommerce->get("products/categories/{id}");
+	$taxonomy = $woocommerce->get("products/categories/{$id}");
     // Ensure data is properly sanitized
 	// 'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',	
 	$data = array_filter([
