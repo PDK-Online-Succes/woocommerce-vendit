@@ -2,8 +2,8 @@
 <?php
 require_once  __DIR__ . '/init.php';
 
-if (file_exists(__DIR__ . '/import/Stocks.xml')) {
-	$xml = simplexml_load_file(__DIR__ . '/import/Stocks.xml');
+if (file_exists(__DIR__ . '/import/Stock.xml')) {
+	$xml = simplexml_load_file(__DIR__ . '/import/Stock.xml');
    //print_r($xml->Stocks->Stock);
    
 	foreach ($xml->Products->Product as $stock ){
@@ -24,7 +24,6 @@ function update_product($woocommerce, $xml, $product){
 		$variation = get_product_variation_by_xml_product_id($woocommerce, $product->id, $xml->ProductId->__toString());
 		if($variation){
 			$variation = $woocommerce->put("products/{$product->id}/variations/{$variation[0]->id}", $data);
-			update_variation($woocommerce, $xml, $variation);
 		}
 		
 	} else {
