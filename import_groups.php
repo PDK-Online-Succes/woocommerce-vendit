@@ -1,4 +1,5 @@
-<?php 
+<pre>
+	<?php 
 require_once  __DIR__ . '/init.php';
 if (file_exists(__DIR__ . '/import/Groups.xml')) {
 	$xml = simplexml_load_file(__DIR__ . '/import/Groups.xml');
@@ -45,14 +46,19 @@ function recursive_subgroup($woocommerce, $xml){
 function create_categorie($woocommerce, $xml, $parent = 0){
 	$data = array_filter([
 		'name'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
+		'slug'        				=> !empty($xml->GroupUrlName) 			? sanitize_text($xml->GroupUrlName->__toString()) 			: '',
 		'parent' 					=> !empty($parent) 						? intval($parent) 											: '',
-        'description' 				=> !empty($xml->GroupDescription) 		? sanitize_text($xml->GroupDescription->__toString()) 		: '',
+        'description' 				=> !empty($xml->GroupDescription) 		? sanitize_html($xml->GroupDescription->__toString()) 		: '',
         'menu_order'  				=> !empty($xml->ItemOrder) 				? (int) $xml->ItemOrder->__toString() 						: '',
         'rank_math_title'  			=> !empty($xml->GroupMetaTitle) 		? sanitize_text($xml->GroupMetaTitle->__toString()) 		: '',
         'rank_math_focus_keyword'  	=> !empty($xml->GroupMetaKeywords) 		? sanitize_text($xml->GroupMetaKeywords->__toString()) 		: '',
         'rank_math_description'  	=> !empty($xml->GroupMetaDescription) 	? sanitize_text($xml->GroupMetaDescription->__toString())	: '',
 		'group_guid' 				=> !empty($xml->GroupGuid) 				? sanitize_text($xml->GroupGuid->__toString()) 				: '',
 	], function($value) {
+		return $value !== '' && $value !== null;
+	});
+
+	$data = array_filter($data, function($value) {
 		return $value !== '' && $value !== null;
 	});
 	//Send create request
@@ -66,16 +72,29 @@ function create_categorie($woocommerce, $xml, $parent = 0){
 
 function update_categorie($woocommerce, $xml, $id) {
 	$taxonomy = $woocommerce->get("products/categories/{$id}");
+	//print_r($taxonomy);
     // Ensure data is properly sanitized
-	// 'slug'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',	
-	$data = array_filter([
+	// 'slug'        				=> !empty($xml->GroupUrlName) 				? sanitize_text($xml->GroupUrlName->__toString()) 				: '',	
+	$data = [
 		'name'        				=> (!empty($xml->GroupName) && $taxonomy->name != sanitize_text($xml->GroupName->__toString())) ? sanitize_text($xml->GroupName->__toString()) : '',
-		'description' 				=> (!empty($xml->GroupDescription) && $taxonomy->description != sanitize_text($xml->GroupDescription->__toString())) ? sanitize_text($xml->GroupDescription->__toString()) : '',
+		'slug'        				=> (!empty($xml->GroupUrlName) && $taxonomy->slug != sanitize_text($xml->GroupUrlName->__toString()) ) ? sanitize_text($xml->GroupUrlName->__toString()) 				: '',
+		'description' 				=> (!empty($xml->GroupDescription) && $taxonomy->description != sanitize_html($xml->GroupDescription->__toString())) ? sanitize_html($xml->GroupDescription->__toString()) : '',
 		'menu_order'  				=> (!empty($xml->ItemOrder) && $taxonomy->menu_order != (int) $xml->ItemOrder->__toString()) ? (int) $xml->ItemOrder->__toString() : '',
 		'rank_math_title'			=> (!empty($xml->GroupMetaTitle) && $taxonomy->rank_math_title != sanitize_text($xml->GroupMetaTitle->__toString())) ? sanitize_text($xml->GroupMetaTitle->__toString()) : '',
 		'rank_math_focus_keyword'	=> (!empty($xml->GroupMetaKeywords) && $taxonomy->rank_math_focus_keyword != sanitize_text($xml->GroupMetaKeywords->__toString())) ? sanitize_text($xml->GroupMetaKeywords->__toString()) : '',
 		'rank_math_description'		=> (!empty($xml->GroupMetaDescription) && $taxonomy->rank_math_description != sanitize_text($xml->GroupMetaDescription->__toString())) 	? sanitize_text($xml->GroupMetaDescription->__toString()) : '',
-	], function($value) {
+	];
+	if($xml->Specs){
+		foreach($xml->Specs->Spec as $spec){
+			$attr = get_attribute_by_name($woocommerce, $spec->Name->__toString());
+			if($attr){
+				//print_r($attr);
+				$data['filter_kenmerk'][] = $attr[0]->slug;
+			}
+		}
+	}
+
+	$data = array_filter($data, function($value) {
 		return $value !== '' && $value !== null;
 	});
 	//'group_guid' 	=> isset($xml->GroupGuid) ? sanitize_text($xml->GroupGuid->__toString()) : '',
@@ -87,11 +106,15 @@ function update_categorie($woocommerce, $xml, $id) {
 		return $response;
     } catch (Exception $e) {
 		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Input: " . json_encode($data, JSON_PRETTY_PRINT));
-        error_log("[ERROR][PUT] API Request Failed: " . $e->getMessage());
-		$response = json_decode($e->getResponse()->getBody(), true);
+		error_log("[ERROR][PUT] API Request Failed: " . $e->getMessage());
+		if ($e instanceof \GuzzleHttp\Exception\RequestException && $e->hasResponse()) {
+			$response = json_decode($e->getResponse()->getBody(), true);
+			error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT));
+		}
 		error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT));
         throw $e; // Re-throw the exception or handle it as needed
     }
 }
 
 ?>
+</pre>
