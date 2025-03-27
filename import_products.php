@@ -55,7 +55,7 @@ function create_product($woocommerce, $xml){
 	}
 
 	$count = $xml->ProductVariations->ProductVariation->count();
-	echo "Variation Count: {$count}<br>";
+	//echo "Variation Count: {$count}<br>";
 
 	if($xml->Brand){
 		$brand = get_brand($woocommerce, $xml->Brand->__toString());
@@ -102,6 +102,19 @@ function create_product($woocommerce, $xml){
 		$data['images'] = array_unique($data['images'], SORT_REGULAR);
 	}
 
+	$link_ids = get_linked_product_ids_from_xml($xml, $woocommerce);
+
+	if (!empty($link_ids['upsell_ids'])) {
+		$data['upsell_ids'] = [$link_ids['upsell_ids']];
+		//print_r($data['upsell_ids']);
+	}
+
+	if (!empty($link_ids['cross_sell_ids'])) {
+		$data['cross_sell_ids'] = [$link_ids['cross_sell_ids']];
+		//print_r($data['cross_sell_ids']);
+	}
+	
+	
 	//print_r($data['images']);
 
 	//check if ProductVariation is only one or multiple
@@ -169,7 +182,14 @@ function create_product_variation($woocommerce, $xml, $product_id, $sku, $primar
 		$data['EcommerceProductVariationGuid'] = !empty($xml->EcommerceProductVariationGuid) ? sanitize_text($xml->EcommerceProductVariationGuid->__toString()) : '';
 		$data['ProductId'] = !empty($xml->ProductId) ? sanitize_text($xml->ProductId->__toString()) : '';
 		$data['manage_stock'] =  !empty($stock) ? strtolower(sanitize_text($stock)) : '';
-
+		
+		foreach($xml->Attributes->Attribute as $attr){
+			if( !empty($attr->SortOrder) ){
+				$data['menu_order'] = (int)$attr->SortOrder;
+				break;
+			}
+		}
+		
 		if($xml->ActionPrices->ActionPrice){
 			$data['sale_price'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') : '';
 			$data['date_on_sale_from'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) : '';
@@ -219,7 +239,7 @@ function update_product($woocommerce, $xml, $product_id){
 
 	if(!$xml->ProductVariations) return "Error No ProductVariations";
 	$count = $xml->ProductVariations->ProductVariation->count();
-	echo "Variation Count: {$count}<br>";
+	//echo "Variation Count: {$count}<br>";
 
 	if($xml->Brand){
 		$brand = get_brand($woocommerce, $xml->Brand->__toString());
@@ -296,6 +316,18 @@ function update_product($woocommerce, $xml, $product_id){
 		//print_r($data['attributes']);
 	}
 
+	$link_ids = get_linked_product_ids_from_xml($xml, $woocommerce);
+
+	if (!empty($link_ids['upsell_ids'])) {
+		$data['upsell_ids'] = $link_ids['upsell_ids'];
+		//print_r($data['upsell_ids']);
+	}
+
+	if (!empty($link_ids['cross_sell_ids'])) {
+		$data['cross_sell_ids'] = $link_ids['cross_sell_ids'];
+		//print_r($data['cross_sell_ids']);
+	}
+
 	//print_r($combined_attributes);
 
 	//check if ProductVariation is only one or multiple
@@ -339,7 +371,7 @@ function update_product($woocommerce, $xml, $product_id){
 		$data['sku'] = ( !empty($xml->ProductNumber) && !empty($xml->ProductVariations->ProductVariation->ProductId) && $product->sku != sanitize_text($xml->ProductNumber->__toString().'_'.$xml->ProductVariations->ProductVariation->ProductId->__toString()) ) ? sanitize_text($xml->ProductNumber->__toString().'_'.$xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
 		$data['regular_price'] = ( !empty($xml->ProductVariations->ProductVariation->SalesPriceInc) && $product->regular_price != number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') ) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') : '';
 		//echo "Product Regular Price: {$product->regular_price}  - " . number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') . "<br>";
-		$data['ProductId'] = ( !empty($xml->ProductVariations->ProductVariation->ProductId) && $product_id->ProductId != sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString())) ? sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
+		$data['ProductId'] = ( !empty($xml->ProductVariations->ProductVariation->ProductId) && $product->ProductId != sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString())) ? sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
 		$data['manage_stock'] = ( !empty($xml->StockProduct) && ( !empty($product->manage_stock) && $product->manage_stock != strtolower(sanitize_text($xml->StockProduct->__toString())) )) ? strtolower(sanitize_text($xml->StockProduct->__toString())) : '';
 
 		if($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice){
@@ -373,8 +405,16 @@ function update_product_variation($woocommerce, $xml, $product_id, $variation_id
 	$data['regular_price'] = ( !empty($xml->SalesPriceInc) && $variation->regular_price != number_format(sanitize_text($xml->SalesPriceInc->__toString()),4,'.','')  ) ? number_format(sanitize_text($xml->SalesPriceInc->__toString()),4,'.','')  : '';
 	$data['EcommerceProductVariationGuid'] = ( !empty($xml->EcommerceProductVariationGuid) && $variation->EcommerceProductVariationGuid != sanitize_text($xml->EcommerceProductVariationGuid->__toString())) ? sanitize_text($xml->EcommerceProductVariationGuid->__toString()) : '';
 	$data['ProductId'] = !empty($xml->ProductId) ? sanitize_text($xml->ProductId->__toString()) : '';
-	$data['manage_stock'] =  ( !empty($stock) && (!empty($variation->manage_stock) && $variation->manage_stock!= strtolower(sanitize_text($stock)) ) ) ? strtolower(sanitize_text($stock)) : '';
+	$data['manage_stock'] = ( !empty($stock) && (!empty($variation->manage_stock) && $variation->manage_stock != strtolower(sanitize_text($stock)) ) ) ? strtolower(sanitize_text($stock)) : '';
 	
+	foreach($xml->Attributes->Attribute as $attr){
+		if( !empty($attr->SortOrder) ){
+			$data['menu_order'] = $variation->menu_order != (int)$attr->SortOrder ? (int)$attr->SortOrder : '';
+			break;
+		}
+	}
+	
+	//$data['menu_order'] =( !empty($xml->Attributes->Attribute->SortOrder) && $variation->menu_order != (int)$xml->Attributes->Attribute->SortOrder ) ? (int)$xml->Attributes->Attribute->SortOrder : 0;
 
 	if($xml->ActionPrices->ActionPrice){
 		$data['sale_price'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc) && $variation->sale_price != number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') ) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') : '';
@@ -444,32 +484,6 @@ function create_attribute_term($woocommerce, $attribute_id, $term){
 	$response = $woocommerce->post("products/attributes/{$attribute_id}/terms", $term);
 	return $response;
 }
-function get_attribute_by_name($woocommerce, $name){
-	$attributes = $woocommerce->get('products/attributes');
-
-	$attribute = array_filter($attributes, function($attr) use ($name) {
-		return strtolower($attr->name) === strtolower($name);
-	});
-	//Return attribute else empty array
-	return array_values($attribute);
-}
-function get_attribute_term_by_name($woocommerce, $attribute_id, $term){
-	$params = [
-		'search' => $term,
-		'per_page' => 1000
-		
-	];
-	$terms = $woocommerce->get("products/attributes/{$attribute_id}/terms", $params);
-
-	$filtered_terms = array_filter($terms, function($t) use ($term) {
-		return strtolower($t->name) === strtolower($term);
-	});
-	//Return term else empty array
-	// print_r(array_values($filtered_terms));
-	// die();
-	return array_values($filtered_terms);
-}
-
 function map_attribute_name($original_name, $primary_category_name) {
     $name = strtolower(trim($original_name));
     $category = strtolower(trim($primary_category_name));
@@ -507,7 +521,7 @@ function map_attribute_name($original_name, $primary_category_name) {
     // No match? Keep the original name
     return $original_name;
 }
-function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
+/*function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
     $variation_attributes = [];
 
     if ($variation_xml->Attributes) {
@@ -537,7 +551,62 @@ function build_variation_attributes_from_xml($variation_xml, $primary_category_n
     }
 
     return $variation_attributes;
+}*/
+function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
+    $variation_attributes = [];
+
+    if (!$variation_xml->Attributes) {
+        return $variation_attributes;
+    }
+
+    $attributes_raw = [];
+
+    // STEP 1: Gather and map attributes with SortOrder
+    foreach ($variation_xml->Attributes->Attribute as $attr) {
+        $original_name = (string)$attr->Name;
+        $mapped_name = map_attribute_name($original_name, $primary_category_name);
+        $value = (string)$attr->Value;
+        $sort_order = isset($attr['SortOrder']) ? (int)$attr['SortOrder'] : 999;
+
+        $attributes_raw[] = [
+            'original_name' => $original_name,
+            'mapped_name' => $mapped_name,
+            'value' => $value,
+            'sort_order' => $sort_order
+        ];
+    }
+
+    // STEP 2: Sort by SortOrder
+    usort($attributes_raw, function ($a, $b) {
+        return $a['sort_order'] <=> $b['sort_order'];
+    });
+
+    // STEP 3: Build variation_attributes
+    foreach ($attributes_raw as $attr) {
+        $attribute = get_attribute_by_name($woocommerce, $attr['mapped_name']);
+        if (!$attribute) {
+            $attribute = create_attribute($woocommerce, $attr['mapped_name']);
+        }
+
+        $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
+
+        $term = get_attribute_term_by_name($woocommerce, $attribute_id, $attr['value']);
+        if (!$term) {
+            $term = create_attribute_term($woocommerce, $attribute_id, $attr['value']);
+        }
+
+        $term_name = is_array($term) ? $term[0]->name : $term->name;
+
+        $variation_attributes[] = [
+            'id' => $attribute_id,
+            'option' => $term_name
+        ];
+    }
+
+    return $variation_attributes;
 }
+
+
 function build_combined_attributes_from_xml($xml, $woocommerce) {
     $attributes = [];
     $variation_attribute_map = [];
@@ -790,6 +859,47 @@ function variation_image_changed($current_image, $new_image) {
         ($new_id && $current_id && $new_id !== $current_id) ||
         ($new_src && $current_src && $new_src !== $current_src)
     );
+}
+
+function get_linked_product_ids_from_xml($xml, $woocommerce) {
+    $upsells = [];
+    $cross_sells = [];
+
+    // Upsells from <SimilarProducts>
+    if (isset($xml->SimilarProducts->SimilarProduct)) {
+        foreach ($xml->SimilarProducts->SimilarProduct as $similar) {
+            $product = get_product_by_guid($woocommerce, $similar->__toString());
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] UpSell: " . json_encode($product, JSON_PRETTY_PRINT));
+            if ($product) $upsells[] = $product[0]->id;
+        }
+    }
+
+    // Cross-sells from <Parts>
+    if (isset($xml->Parts->PartProduct)) {
+        foreach ($xml->Parts->PartProduct as $part) {
+            $product = get_product_by_guid($woocommerce, $part->__toString());
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell: " . json_encode($product, JSON_PRETTY_PRINT));
+            if ($product) $cross_sells[] = $product[0]->id;
+        }
+    }
+
+    // Cross-sells from <Accessories>
+    if (isset($xml->Accessories->AccessoryProduct)) {
+        foreach ($xml->Accessories->AccessoryProduct as $accessory) {
+            $product = get_product_by_guid($woocommerce, $accessory->__toString());
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell2: " . json_encode($product, JSON_PRETTY_PRINT));
+            if ($product) $cross_sells[] = $product[0]->id;
+        }
+    }
+
+    // Deduplicate
+    $upsells = array_values(array_unique($upsells));
+    $cross_sells = array_values(array_unique($cross_sells));
+
+    return [
+        'upsell_ids' => implode(',', $upsells),
+        'cross_sell_ids' => implode(',', $cross_sells)
+    ];
 }
 ?>
 </pre>
