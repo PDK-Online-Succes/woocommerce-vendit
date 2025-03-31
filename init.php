@@ -6,8 +6,8 @@ require __DIR__ . '/vendor/autoload.php';
 use Dotenv\Dotenv;
 use Automattic\WooCommerce\Client;
 
-include_once 'includes/functions.php';
-include_once 'includes/sanitization.php';
+include_once __DIR__.'/includes/functions.php';
+include_once __DIR__.'/includes/sanitization.php';
 
 $dotenv = Dotenv::createImmutable(dirname(__DIR__));
 $dotenv->load();
@@ -30,7 +30,6 @@ $woocommerce = new Client(
 		'query_string_auth' => true // Force Basic Authentication as query string true and using under HTTPS
     ]
 );
-//var_dump(evalBool($_ENV['DEBUG']));
 
 // Multi-functional fetch function
 function fetch_wordpress_data($endpoint, $params = []) {
@@ -118,38 +117,26 @@ function create_brand($woocommerce, $brand){
 	return false;
 }
 
+function url_origin($s = [], $use_forwarded_host = false) {
+    // Fallback base URL for CLI
+    $cli_base_url = $_ENV['ImportURL'];
 
-function url_origin( $s, $use_forwarded_host = false )
-{
+    // If run from CLI or $_SERVER not properly set
+    if (php_sapi_name() === 'cli' || empty($s['HTTP_HOST'])) {
+        return $cli_base_url;
+    }
+
     $ssl      = ( ! empty( $s['HTTPS'] ) && $s['HTTPS'] == 'on' );
     $sp       = strtolower( $s['SERVER_PROTOCOL'] );
-    $protocol = substr( $sp, 0, strpos( $sp, '/' ) ) . ( ( $ssl ) ? 's' : '' );
+    $protocol = substr( $sp, 0, strpos( $sp, '/' ) ) . ( $ssl ? 's' : '' );
     $port     = $s['SERVER_PORT'];
-    $port     = ( ( ! $ssl && $port=='80' ) || ( $ssl && $port=='443' ) ) ? '' : ':'.$port;
-    $host     = ( $use_forwarded_host && isset( $s['HTTP_X_FORWARDED_HOST'] ) ) ? $s['HTTP_X_FORWARDED_HOST'] : ( isset( $s['HTTP_HOST'] ) ? $s['HTTP_HOST'] : null );
-    $host     = isset( $host ) ? $host : $s['SERVER_NAME'] . $port;
-    return $protocol . '://' . $host;
+    $port     = ( ( ! $ssl && $port == '80' ) || ( $ssl && $port == '443' ) ) ? '' : ':' . $port;
+    $host     = $use_forwarded_host && isset( $s['HTTP_X_FORWARDED_HOST'] )
+        ? $s['HTTP_X_FORWARDED_HOST']
+        : ( $s['HTTP_HOST'] ?? $s['SERVER_NAME'] ?? null );
+
+    $host = $host ?? 'localhost';
+    return $protocol . '://' . $host . $port;
 }
-
-// $params = [
-//     'search' => 'F068FA60-34F7-4093-8F35-0E873095A33E_7004-0_18.png',  // Search by filename
-//     'per_page' => 10  // Limit the number of results
-// ];
-
-// $media = fetch_wordpress_data('media', $params);
-
-// if ($media) {
-//     echo "Media found:\n";
-// 	echo "<pre>";
-// 	echo "{$media[0]['id']}";
-//     print_r($media);
-// 	echo "</pre>";	
-// } else {
-//     echo "No media found.";
-// 	echo "<pre>";
-//     print_r($media);
-// 	echo "</pre>";	
-// }
-
 
 ?>

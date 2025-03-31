@@ -1,25 +1,30 @@
 <pre>
-	<?php 
+<?php
 require_once  __DIR__ . '/init.php';
-if (file_exists(__DIR__ . '/import/Groups.xml')) {
-	$xml = simplexml_load_file(__DIR__ . '/import/Groups.xml');
-   //print_r($xml->Groups->Group);
-   
-	foreach ($xml->Groups->Group as $group ){
-		$group_guid = $group->GroupGuid->__toString();
-		$category = get_category_by_guid($woocommerce, $group_guid);
-		if(!$category){
-			//Create categorie
-			create_categorie($woocommerce, $group, $parent = 0);
-		} else {
-			//Update categorie with $category[0]->id
-			update_categorie($woocommerce, $group, $category[0]->id);
+
+$files = recursive_scan_dir('tmp/groups');
+foreach($files as $file){
+	if (file_exists(__DIR__.DIRECTORY_SEPARATOR.$file)) {
+		$xml = simplexml_load_file(__DIR__.DIRECTORY_SEPARATOR.$file);
+		//print_r($xml->Groups->Group);
+	
+		foreach ($xml->Groups->Group as $group ){
+			$group_guid = $group->GroupGuid->__toString();
+			$category = get_category_by_guid($woocommerce, $group_guid);
+			if(!$category){
+				//Create categorie
+				create_categorie($woocommerce, $group, $parent = 0);
+			} else {
+				//Update categorie with $category[0]->id
+				update_categorie($woocommerce, $group, $category[0]->id);
+			}
+			//Delve Deeper for sub Categories
+			recursive_subgroup($woocommerce, $group);
 		}
-		//Delve Deeper for sub Categories
-		recursive_subgroup($woocommerce, $group);
+		unlink(__DIR__.DIRECTORY_SEPARATOR.$file);
+		//error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>");
 	}
 }
-
 function recursive_subgroup($woocommerce, $xml){
 	//Check if we have reached the bottom
 	if( !$xml->SubGroups->Group ) return error_log("We have reached the bottom.");

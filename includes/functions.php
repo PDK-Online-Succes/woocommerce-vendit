@@ -1,4 +1,29 @@
 <?php
+
+function recursive_scan_dir($path) {
+    $files = [];
+    $entries = scandir($path);
+    foreach ($entries as $entry) {
+		$dotDB = explode (".", $entry);
+		$dotDB = end($dotDB);
+		//Remove ., .., .DS_Store, ._.DS_Store, ._, db, url
+    if ($entry != "." && $entry != "..") { 
+            if (is_dir($path . DIRECTORY_SEPARATOR . $entry)) {
+				chmod($path . DIRECTORY_SEPARATOR . $entry, 0775);
+                $files[$entry] = recursive_scan_dir($path . DIRECTORY_SEPARATOR . $entry);
+            } else {
+				if ($entry == ".DS_Store" || $entry == "._.DS_Store" || $entry == "Thumbs.db" || substr($entry, 0,2)=="._" || $dotDB == "db" || $dotDB == "url" ) {
+					unlink($path . DIRECTORY_SEPARATOR . $entry); 
+					//echo $entry." Removed\r\n";
+				} else {
+					$files[] = (string)$path.DIRECTORY_SEPARATOR.$entry;
+				}
+            }
+        }
+    }
+    return $files;
+}
+
 /**
  * Summary of get_product_by_guid
  * @param mixed $woocommerce

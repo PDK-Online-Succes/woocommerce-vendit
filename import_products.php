@@ -2,38 +2,42 @@
 <?php
 require_once  __DIR__ . '/init.php';
 
-if (file_exists(__DIR__ . '/import/Products.xml')) {
-	$xml = simplexml_load_file(__DIR__ . '/import/Products.xml');
-	global $create;
-	$create=0;
-	$update=0;
-	$delete=0;
-	$total=0;
-	$i=0;
-	foreach ($xml->Products->Product as $item ){
-		$total++;
-		$EcommerceProductGuid = $item->EcommerceProductGuid->__toString();
-		$product = get_product_by_guid($woocommerce, $EcommerceProductGuid);
-		if(!$product){
-			$create++;
-			//Create product
-			create_product($woocommerce, $item);
-		} else {
-			if($item->IsDeleted->__toString() === "False"){
-				$update++;
-				$product = $woocommerce->get("products/{$product[0]->id}");
-				//Update product with $product[0]->id
-				update_product($woocommerce, $item, $product->id);
+$files = recursive_scan_dir('tmp/products');
+foreach($files as $file){
+	if (file_exists(__DIR__.DIRECTORY_SEPARATOR.$file)) {
+		$xml = simplexml_load_file(__DIR__.DIRECTORY_SEPARATOR.$file);
+		global $create;
+		$create=0;
+		$update=0;
+		$delete=0;
+		$total=0;
+		$i=0;
+		foreach ($xml->Products->Product as $item ){
+			$total++;
+			$EcommerceProductGuid = $item->EcommerceProductGuid->__toString();
+			$product = get_product_by_guid($woocommerce, $EcommerceProductGuid);
+			if(!$product){
+				$create++;
+				//Create product
+				create_product($woocommerce, $item);
 			} else {
-				$delete++;
-				//Delete product with $product[0]->id
-				$woocommerce->delete("products/{$product[0]->id}", ['force' => true]);
+				if($item->IsDeleted->__toString() === "False"){
+					$update++;
+					$product = $woocommerce->get("products/{$product[0]->id}");
+					//Update product with $product[0]->id
+					update_product($woocommerce, $item, $product->id);
+				} else {
+					$delete++;
+					//Delete product with $product[0]->id
+					$woocommerce->delete("products/{$product[0]->id}", ['force' => true]);
+				}
 			}
+			$i++; 
+			//if($i == 10) break;
 		}
-		$i++; 
-		//if($i == 10) break;
+		unlink(__DIR__.DIRECTORY_SEPARATOR.$file);
+		error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>");
 	}
-	error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>");
 }
 
 function create_product($woocommerce, $xml){
@@ -65,6 +69,10 @@ function create_product($woocommerce, $xml){
 		$data['brands'][] = [
 			'id' => is_array($brand) ? $brand[0]->id : $brand->id
 		];
+		$data['meta_data'][] = [
+			'key' => 'rank_math_primary_product_brand',
+			'value' => is_array($brand) ? $brand[0]->id : $brand->id
+		];
 	}
 
 	foreach($xml->Groups->ProductGroup as $group){
@@ -77,6 +85,10 @@ function create_product($woocommerce, $xml){
 			//echo "Default ProductGroup ID: " . (string)$group . "\n";
 			$data['meta_data'][] = [
 				'key' => '_primary_term_product_cat',
+				'value' => $category[0]->id
+			];
+			$data['meta_data'][] = [
+				'key' => 'rank_math_primary_product_cat',
 				'value' => $category[0]->id
 			];
 			if ($category && isset($category[0])) {
@@ -253,6 +265,10 @@ function update_product($woocommerce, $xml, $product_id){
 			$data['brands'][] = [
 				'id' => $new_brand_id
 			];
+			$data['meta_data'][] = [
+				'key' => 'rank_math_primary_product_brand',
+				'value' => $new_brand_id
+			];
 		}
 	}
 
@@ -278,6 +294,10 @@ function update_product($woocommerce, $xml, $product_id){
 		if ((string)$group['Default'] === "True") {
 			$meta_data[] = [
 				'key' => '_primary_term_product_cat',
+				'value' => $cat_id
+			];
+			$data['meta_data'][] = [
+				'key' => 'rank_math_primary_product_cat',
 				'value' => $cat_id
 			];
             if ($category && isset($category[0])) {
