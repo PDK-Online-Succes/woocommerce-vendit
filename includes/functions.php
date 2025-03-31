@@ -56,8 +56,13 @@ function get_product_variation_by_xml_product_id($woocommerce, $product_id, $xml
 	//Send get Request
 	try {
 		$response = $woocommerce->get("products/{$product_id}/variations", $params);
-		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] Get Variation By XML ProductId: " . json_encode($response, JSON_PRETTY_PRINT));
-		return $response;
+		
+		$filtered_variations = array_filter($response, function($t) use ($xml_product_id) {
+			return strtolower($t->ProductId) === strtolower($xml_product_id);
+		});
+
+		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] Get Variation By XML ProductId: " . json_encode($filtered_variations, JSON_PRETTY_PRINT));
+		return array_values($filtered_variations);
 	} catch (Exception $e) {
 		error_log("[ERROR][GET] API Request Failed: " . $e->getMessage());
 	}

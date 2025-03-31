@@ -407,10 +407,12 @@ function update_product_variation($woocommerce, $xml, $product_id, $variation_id
 	$data['ProductId'] = !empty($xml->ProductId) ? sanitize_text($xml->ProductId->__toString()) : '';
 	$data['manage_stock'] = ( !empty($stock) && (!empty($variation->manage_stock) && $variation->manage_stock != strtolower(sanitize_text($stock)) ) ) ? strtolower(sanitize_text($stock)) : '';
 	
-	foreach($xml->Attributes->Attribute as $attr){
-		if( !empty($attr->SortOrder) ){
-			$data['menu_order'] = $variation->menu_order != (int)$attr->SortOrder ? (int)$attr->SortOrder : '';
-			break;
+	if($xml->Attributes->Attribute){
+		foreach($xml->Attributes->Attribute as $attr){
+			if( !empty($attr->SortOrder) ){
+				$data['menu_order'] = $variation->menu_order != (int)$attr->SortOrder ? (int)$attr->SortOrder : '';
+				break;
+			}
 		}
 	}
 	
@@ -490,13 +492,53 @@ function map_attribute_name($original_name, $primary_category_name) {
 
     // Define attribute renaming rules
     $attribute_map = [
-        'color' => 'Kleur',
+        //'color' => 'Kleur',
+		'color' => [
+			'luchtbuks' => 'Joule',
+			'luchtbuks / geweer' => 'Joule',
+			'luchtdrukpistool' => 'Joule',
+			'luchtdrukmunitie' => 'Joule',
+			'pcp buks' => 'Joule',
+			'veer buks' => 'Joule',
+			'buks to 7.5j' => 'Joule',
+			'buks van 7.5 - 100j' => 'Joule',
+			'buks van 100 - 500j' => 'Kaliber',
+			'buks 500j+' => 'Joule',
+			'veer pistool' => 'Joule',
+			'pistool tot 7.5j' => 'Joule',
+		],
         'size' => [
-            'broeken' => 'Kledingmaat',
-            'truien' => 'Kledingmaat',
-            't-shirts' => 'Kledingmaat',
+			//Kleding
+            'broeken' => 'Broekmaat',
             'schoenen' => 'Schoenmaat',
             'laarzen' => 'Schoenmaat',
+			//Wapens
+			'luchtbuks' => 'Kaliber',
+			'luchtbuks / geweer' => 'Kaliber',
+			'luchtdrukpistool' => 'Kaliber',
+			'luchtdrukmunitie' => 'Kaliber',
+			'pcp buks' => 'Kaliber',
+			'veer buks' => 'Kaliber',
+			'buks to 7.5j' => 'Kaliber',
+			'buks van 7.5 - 100j' => 'Kaliber',
+			'buks van 100 - 500j' => 'Kaliber',
+			'buks 500j+' => 'Kaliber',
+			'veer pistool' => 'Kaliber',
+			'pistool tot 7.5j' => 'Kaliber',
+			'pellets' => 'Kaliber',
+			'jacht' => 'Kaliber',
+			'wapen' => 'Kaliber',
+			'groot kaliber geweer' => 'Kaliber',
+			'klein kaliber geweer' => 'Kaliber',
+			'schietsport' => 'Kaliber',
+			'klein kaliber pistool' => 'Kaliber',
+			'groot kaliber pistool' => 'Kaliber',
+			//Kijkers
+			'kijkers' => 'Vergroting',
+			'verrekijkers' => 'Vergroting',
+			'monokijkers' => 'Vergroting',
+			'spotting scope' => 'Vergroting',
+			'afstand meter' => 'Vergroting',
             // You can add more here
         ]
     ];
@@ -513,100 +555,13 @@ function map_attribute_name($original_name, $primary_category_name) {
         }
 
         // ❗ Default fallback for "size" if category not mapped
-        if ($name === 'size') {
-            return 'Maat';
-        }
+        if ($name === 'size')  return 'Maat';
+		if ($name === 'color') return 'Kleur';
     }
 
     // No match? Keep the original name
     return $original_name;
 }
-/*function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
-    $variation_attributes = [];
-
-    if ($variation_xml->Attributes) {
-        foreach ($variation_xml->Attributes->Attribute as $attr) {
-            $original_name = (string)$attr->Name;
-            $mapped_name = map_attribute_name($original_name, $primary_category_name);
-
-            $attribute = get_attribute_by_name($woocommerce, $mapped_name);
-            if (!$attribute) {
-                $attribute = create_attribute($woocommerce, $mapped_name);
-            }
-
-            $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-
-            $term = get_attribute_term_by_name($woocommerce, $attribute_id, (string)$attr->Value);
-            if (!$term) {
-                $term = create_attribute_term($woocommerce, $attribute_id, (string)$attr->Value);
-            }
-
-            $term_name = is_array($term) ? $term[0]->name : $term->name;
-
-            $variation_attributes[] = [
-                'id' => $attribute_id,
-                'option' => $term_name
-            ];
-        }
-    }
-
-    return $variation_attributes;
-}*/
-function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
-    $variation_attributes = [];
-
-    if (!$variation_xml->Attributes) {
-        return $variation_attributes;
-    }
-
-    $attributes_raw = [];
-
-    // STEP 1: Gather and map attributes with SortOrder
-    foreach ($variation_xml->Attributes->Attribute as $attr) {
-        $original_name = (string)$attr->Name;
-        $mapped_name = map_attribute_name($original_name, $primary_category_name);
-        $value = (string)$attr->Value;
-        $sort_order = isset($attr['SortOrder']) ? (int)$attr['SortOrder'] : 999;
-
-        $attributes_raw[] = [
-            'original_name' => $original_name,
-            'mapped_name' => $mapped_name,
-            'value' => $value,
-            'sort_order' => $sort_order
-        ];
-    }
-
-    // STEP 2: Sort by SortOrder
-    usort($attributes_raw, function ($a, $b) {
-        return $a['sort_order'] <=> $b['sort_order'];
-    });
-
-    // STEP 3: Build variation_attributes
-    foreach ($attributes_raw as $attr) {
-        $attribute = get_attribute_by_name($woocommerce, $attr['mapped_name']);
-        if (!$attribute) {
-            $attribute = create_attribute($woocommerce, $attr['mapped_name']);
-        }
-
-        $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-
-        $term = get_attribute_term_by_name($woocommerce, $attribute_id, $attr['value']);
-        if (!$term) {
-            $term = create_attribute_term($woocommerce, $attribute_id, $attr['value']);
-        }
-
-        $term_name = is_array($term) ? $term[0]->name : $term->name;
-
-        $variation_attributes[] = [
-            'id' => $attribute_id,
-            'option' => $term_name
-        ];
-    }
-
-    return $variation_attributes;
-}
-
-
 function build_combined_attributes_from_xml($xml, $woocommerce) {
     $attributes = [];
     $variation_attribute_map = [];
@@ -650,6 +605,7 @@ function build_combined_attributes_from_xml($xml, $woocommerce) {
             }
 
             $value = (string) $spec->Value;
+            $split_values = array_map('trim', explode(',', $value));
 
             $attribute = get_attribute_by_name($woocommerce, $mapped_name);
             if (!$attribute) {
@@ -659,24 +615,29 @@ function build_combined_attributes_from_xml($xml, $woocommerce) {
             $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
             $attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
 
-            $term = get_attribute_term_by_name($woocommerce, $attribute_id, $value);
-            if (!$term) {
-                $term = create_attribute_term($woocommerce, $attribute_id, $value);
-            }
+            $term_names = [];
+            foreach ($split_values as $val) {
+                if ($val === '') continue;
 
-            $term_name = is_array($term) ? $term[0]->name : $term->name;
+                $term = get_attribute_term_by_name($woocommerce, $attribute_id, $val);
+                if (!$term) {
+                    $term = create_attribute_term($woocommerce, $attribute_id, $val);
+                }
+
+                $term_names[] = is_array($term) ? $term[0]->name : $term->name;
+            }
 
             $attributes[] = [
                 'id' => $attribute_id,
                 'name' => $attribute_name,
                 'visible' => true,
                 'variation' => false,
-                'options' => [$term_name]
+                'options' => $term_names
             ];
         }
     }
 
-    // STEP 3: Add variation attributes to final array
+    // STEP 3: Add variation attributes
     foreach ($variation_attribute_map as $mapped_name => $values) {
         $attribute = get_attribute_by_name($woocommerce, $mapped_name);
         if (!$attribute) {
@@ -688,23 +649,90 @@ function build_combined_attributes_from_xml($xml, $woocommerce) {
 
         $term_names = [];
         foreach (array_unique($values) as $value) {
-            $term = get_attribute_term_by_name($woocommerce, $attribute_id, $value);
-            if (!$term) {
-                $term = create_attribute_term($woocommerce, $attribute_id, $value);
+            $split_values = array_map('trim', explode(',', $value));
+
+            foreach ($split_values as $val) {
+                if ($val === '') continue;
+
+                $term = get_attribute_term_by_name($woocommerce, $attribute_id, $val);
+                if (!$term) {
+                    $term = create_attribute_term($woocommerce, $attribute_id, $val);
+                }
+
+                $term_names[] = is_array($term) ? $term[0]->name : $term->name;
             }
-            $term_names[] = is_array($term) ? $term[0]->name : $term->name;
         }
 
         $attributes[] = [
             'id' => $attribute_id,
             'name' => $attribute_name,
             'visible' => true,
-            'variation' => $attribute_name != "Kleur",
-            'options' => $term_names
+            'variation' => count($term_names) > 1,
+            'options' => array_unique($term_names)
         ];
     }
-	evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Attributes: " . json_encode($attributes, JSON_PRETTY_PRINT));
+
+    evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Attributes: " . json_encode($attributes, JSON_PRETTY_PRINT));
     return $attributes;
+}
+
+function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
+    $variation_attributes = [];
+
+    if (!$variation_xml->Attributes) {
+        return $variation_attributes;
+    }
+
+    $attributes_raw = [];
+
+    // STEP 1: Gather and map attributes with SortOrder
+    foreach ($variation_xml->Attributes->Attribute as $attr) {
+        $original_name = (string)$attr->Name;
+        $mapped_name = map_attribute_name($original_name, $primary_category_name);
+        $value = (string)$attr->Value;
+        $sort_order = isset($attr['SortOrder']) ? (int)$attr['SortOrder'] : 999;
+
+        $attributes_raw[] = [
+            'original_name' => $original_name,
+            'mapped_name' => $mapped_name,
+            'value' => $value,
+            'sort_order' => $sort_order
+        ];
+    }
+
+    // STEP 2: Sort by SortOrder
+    usort($attributes_raw, function ($a, $b) {
+        return $a['sort_order'] <=> $b['sort_order'];
+    });
+
+    // STEP 3: Build variation_attributes
+    foreach ($attributes_raw as $attr) {
+        $attribute = get_attribute_by_name($woocommerce, $attr['mapped_name']);
+        if (!$attribute) {
+            $attribute = create_attribute($woocommerce, $attr['mapped_name']);
+        }
+
+        $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
+
+        $split_values = array_map('trim', explode(',', $attr['value']));
+        foreach ($split_values as $val) {
+            if ($val === '') continue;
+
+            $term = get_attribute_term_by_name($woocommerce, $attribute_id, $val);
+            if (!$term) {
+                $term = create_attribute_term($woocommerce, $attribute_id, $val);
+            }
+
+            $term_name = is_array($term) ? $term[0]->name : $term->name;
+
+            $variation_attributes[] = [
+                'id' => $attribute_id,
+                'option' => $term_name
+            ];
+        }
+    }
+
+    return $variation_attributes;
 }
 
 function attributes_changed($current_attributes, $new_attributes) {

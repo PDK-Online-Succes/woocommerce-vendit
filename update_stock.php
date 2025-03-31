@@ -21,9 +21,14 @@ function update_product($woocommerce, $xml, $product){
 	$data['stock_quantity'] = $xml->Quantity->__toString();
 
 	if($product->type == 'variable'){
-		$variation = get_product_variation_by_xml_product_id($woocommerce, $product->id, $xml->ProductId->__toString());
-		if($variation){
-			$variation = $woocommerce->put("products/{$product->id}/variations/{$variation[0]->id}", $data);
+		$variations = get_product_variation_by_xml_product_id($woocommerce, $product->id, $xml->ProductId->__toString());
+		
+		if($variations){
+			//print_r($variations[0]->id);
+			//die();
+			$variation = $woocommerce->get("products/{$product->id}/variations/{$variations[0]->id}");
+
+			$woocommerce->put("products/{$product->id}/variations/{$variation->id}", $data);
 		}
 		
 	} else {
