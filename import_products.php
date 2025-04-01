@@ -38,7 +38,7 @@ foreach($files as $file){
 			//if($i == 10) break;
 		}
 		unlink(__DIR__.DIRECTORY_SEPARATOR.$file);
-		error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>", 0 , IMPORT_ERROR_LOG);
+		error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>", 3 , IMPORT_ERROR_LOG);
 	}
 }
 
@@ -57,7 +57,7 @@ function create_product($woocommerce, $xml){
 	];
 	if(!$xml->ProductVariations) { 
 		$create--;
-		return error_log( "[ERROR] No Variations Found: " . print_r( $xml, true ) , 0 , IMPORT_ERROR_LOG);
+		return error_log( "[ERROR] No Variations Found: " . print_r( $xml, true ) , 3 , IMPORT_ERROR_LOG);
 	}
 
 	$count = $xml->ProductVariations->ProductVariation->count();
@@ -142,7 +142,7 @@ function create_product($woocommerce, $xml){
 		//Create Product
 		try {
 			$response = $woocommerce->post('products', $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Product Create: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Product Create: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
 
 			foreach ($xml->ProductVariations->ProductVariation as $variation){
 				$guid = $variation->EcommerceProductVariationGuid->__toString();
@@ -156,7 +156,7 @@ function create_product($woocommerce, $xml){
 			}
 			//print_r($data);
 		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
+			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
 		}
 	} else {
 		$data['type'] = 'simple';
@@ -179,10 +179,10 @@ function create_product($woocommerce, $xml){
 		try {
 
 			$response = $woocommerce->post('products', $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Product Create: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Product Create: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
 			
 		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
+			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
 		}
 		
 	}
@@ -229,9 +229,9 @@ function create_product_variation($woocommerce, $xml, $product_id, $sku, $primar
 		//return $woocommerce->post("products/{$product_id}/variations", $data);
 		try {
 			$response = $woocommerce->post("products/{$product_id}/variations", $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Variation Create: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Variation Create: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
 		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
+			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
 		}
 
 	//print_r($data);
@@ -364,7 +364,7 @@ function update_product($woocommerce, $xml, $product_id){
 		//Update Product
 		try {
 			$response = $woocommerce->put("products/{$product->id}", $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Product Update: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Product Update: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
 
 			foreach ($xml->ProductVariations->ProductVariation as $variation){
 				$guid = $variation->EcommerceProductVariationGuid->__toString();
@@ -386,7 +386,7 @@ function update_product($woocommerce, $xml, $product_id){
 			}
 			//print_r($data);
 		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
+			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
 		}
 	} else {
 		//$data['type'] = $product->type != 'simple' ? 'simple' : '';
@@ -410,10 +410,10 @@ function update_product($woocommerce, $xml, $product_id){
 		try {
 
 			$response = $woocommerce->put("products/{$product->id}", $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Product Update: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Product Update: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
 			
 		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
+			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
 		}
 		
 	}
@@ -481,9 +481,9 @@ function update_product_variation($woocommerce, $xml, $product_id, $variation_id
 	//return $woocommerce->post("products/{$product_id}/variations", $data);
 	try {
 		$response = $woocommerce->put("products/{$product_id}/variations/{$variation->id}", $data);
-		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Variation Update: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Variation Update: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
 	} catch (Exception $e) {
-		error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
+		error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
 	}
 }
 
@@ -694,7 +694,7 @@ function build_combined_attributes_from_xml($xml, $woocommerce) {
         ];
     }
 
-    evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Attributes: " . json_encode($attributes, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+    evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Attributes: " . json_encode($attributes, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
     return $attributes;
 }
 
@@ -919,7 +919,7 @@ function get_linked_product_ids_from_xml($xml, $woocommerce) {
     if (isset($xml->SimilarProducts->SimilarProduct)) {
         foreach ($xml->SimilarProducts->SimilarProduct as $similar) {
             $product = get_product_by_guid($woocommerce, $similar->__toString());
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] UpSell: " . json_encode($product, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] UpSell: " . json_encode($product, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
             if ($product) $upsells[] = $product[0]->id;
         }
     }
@@ -928,7 +928,7 @@ function get_linked_product_ids_from_xml($xml, $woocommerce) {
     if (isset($xml->Parts->PartProduct)) {
         foreach ($xml->Parts->PartProduct as $part) {
             $product = get_product_by_guid($woocommerce, $part->__toString());
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell: " . json_encode($product, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell: " . json_encode($product, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
             if ($product) $cross_sells[] = $product[0]->id;
         }
     }
@@ -937,7 +937,7 @@ function get_linked_product_ids_from_xml($xml, $woocommerce) {
     if (isset($xml->Accessories->AccessoryProduct)) {
         foreach ($xml->Accessories->AccessoryProduct as $accessory) {
             $product = get_product_by_guid($woocommerce, $accessory->__toString());
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell2: " . json_encode($product, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell2: " . json_encode($product, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
             if ($product) $cross_sells[] = $product[0]->id;
         }
     }

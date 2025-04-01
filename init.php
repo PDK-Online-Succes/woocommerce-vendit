@@ -12,8 +12,9 @@ include_once __DIR__.'/includes/sanitization.php';
 $dotenv = Dotenv::createImmutable(dirname(__DIR__));
 $dotenv->load();
 
+$error_path = dirname(__DIR__);
+define('IMPORT_ERROR_LOG', (string)$error_path . '/vendit.log');
 
-const IMPORT_ERROR_LOG = dirname(__DIR__) . '/vendit.log';
 // Custom Dotenv Boolean Support
 if (! function_exists('evalBool')) {
 	function evalBool($value)

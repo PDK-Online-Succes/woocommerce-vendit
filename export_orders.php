@@ -117,7 +117,7 @@ do {
         }
 
     } catch (Exception $e) {
-        error_log("[ERROR][GET] API Request Failed on page $page: " . $e->getMessage());
+        error_log("[ERROR][GET] API Request Failed on page $page: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
         break;
     }
 
