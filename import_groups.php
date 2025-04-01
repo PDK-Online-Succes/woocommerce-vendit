@@ -69,9 +69,9 @@ function create_categorie($woocommerce, $xml, $parent = 0){
 	//Send create request
 	try {
         $response = $woocommerce->post('products/categories', $data);
-        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT));
+        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
     } catch (Exception $e) {
-        error_log("[ERROR][POST] API Request Failed: " . $e->getMessage());
+        error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
     }
 }
 
@@ -107,16 +107,16 @@ function update_categorie($woocommerce, $xml, $id) {
     //Send update request
     try {
         $response = $woocommerce->put("products/categories/{$id}", $data);
-        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT));
+        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
 		return $response;
     } catch (Exception $e) {
-		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Input: " . json_encode($data, JSON_PRETTY_PRINT));
-		error_log("[ERROR][PUT] API Request Failed: " . $e->getMessage());
+		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Input: " . json_encode($data, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
+		error_log("[ERROR][PUT] API Request Failed: " . $e->getMessage(), 0 , IMPORT_ERROR_LOG);
 		if ($e instanceof \GuzzleHttp\Exception\RequestException && $e->hasResponse()) {
 			$response = json_decode($e->getResponse()->getBody(), true);
-			error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT));
+			error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
 		}
-		error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT));
+		error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT), 0 , IMPORT_ERROR_LOG);
         throw $e; // Re-throw the exception or handle it as needed
     }
 }

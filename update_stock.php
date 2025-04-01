@@ -6,7 +6,7 @@ $delete = true;
 
 foreach($files as $file){
 	if (file_exists(__DIR__.DIRECTORY_SEPARATOR.$file)) {
-		error_log("[DEBUG] StockFile: ".__DIR__.DIRECTORY_SEPARATOR.$file);
+		error_log("[DEBUG] StockFile: ".__DIR__.DIRECTORY_SEPARATOR.$file, 0 , IMPORT_ERROR_LOG);
 		$xml = simplexml_load_file(__DIR__.DIRECTORY_SEPARATOR.$file);
 		//print_r($xml->Stocks->Stock);
 		if($xml->Products->Product){
@@ -18,7 +18,7 @@ foreach($files as $file){
 					update_product($woocommerce, $stock, $product);
 				} else {
 					$delete = false;
-					error_log("[DEBUG] Product not found: {$product_guid}");
+					error_log("[DEBUG] Product not found: {$product_guid}", 0 , IMPORT_ERROR_LOG);
 				}
 			}
 		}
@@ -43,7 +43,7 @@ function update_product($woocommerce, $xml, $product){
 			$data = array_filter($data, function($value) {
 				return $value !== '' && $value !== null;
 			});
-			if(empty($data)) return error_log("[DEBUG] No data to update for product: {$variation->id}");
+			if(empty($data)) return error_log("[DEBUG] No data to update for product: {$variation->id}", 0 , IMPORT_ERROR_LOG);
 
 			$woocommerce->put("products/{$product->id}/variations/{$variation->id}", $data);
 		}
@@ -54,7 +54,7 @@ function update_product($woocommerce, $xml, $product){
 		$data = array_filter($data, function($value) {
 			return $value !== '' && $value !== null;
 		});
-		if(empty($data)) return error_log("[DEBUG] No data to update for product: {$product->id}");
+		if(empty($data)) return error_log("[DEBUG] No data to update for product: {$product->id}", 0 , IMPORT_ERROR_LOG);
 
 		$woocommerce->put("products/{$product->id}", $data);
 	}
