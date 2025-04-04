@@ -6,7 +6,7 @@ $delete = true;
 
 foreach($files as $file){
 	if (file_exists(__DIR__.DIRECTORY_SEPARATOR.$file)) {
-		error_log("[DEBUG] StockFile: ".__DIR__.DIRECTORY_SEPARATOR.$file, 3 , IMPORT_ERROR_LOG);
+		evalBool($_ENV['DEBUG']) && error_log("[DEBUG] StockFile: ".__DIR__.DIRECTORY_SEPARATOR.$file."\r\n", 3 , IMPORT_ERROR_LOG);
 		$xml = simplexml_load_file(__DIR__.DIRECTORY_SEPARATOR.$file);
 		//print_r($xml->Stocks->Stock);
 		if($xml->Products->Product){
@@ -17,8 +17,8 @@ foreach($files as $file){
 					$product = $woocommerce->get("products/{$product[0]->id}");
 					update_product($woocommerce, $stock, $product);
 				} else {
-					$delete = false;
-					error_log("[DEBUG] Product not found: {$product_guid}", 3 , IMPORT_ERROR_LOG);
+					//$delete = false;
+					evalBool($_ENV['DEBUG']) && error_log("[DEBUG] Product not found: {$product_guid}\r\n", 3 , IMPORT_ERROR_LOG);
 				}
 			}
 		}
@@ -28,8 +28,6 @@ foreach($files as $file){
 }
 
 function update_product($woocommerce, $xml, $product){
-	
-
 	if($product->type == 'variable'){
 		$variations = get_product_variation_by_xml_product_id($woocommerce, $product->id, $xml->ProductId->__toString());
 		
@@ -43,7 +41,7 @@ function update_product($woocommerce, $xml, $product){
 			$data = array_filter($data, function($value) {
 				return $value !== '' && $value !== null;
 			});
-			if(empty($data)) return error_log("[DEBUG] No data to update for product: {$variation->id}", 3 , IMPORT_ERROR_LOG);
+			if(empty($data)) return evalBool($_ENV['DEBUG']) && error_log("[DEBUG] No data to update for product: {$variation->id}\r\n", 3 , IMPORT_ERROR_LOG);
 
 			$woocommerce->put("products/{$product->id}/variations/{$variation->id}", $data);
 		}
@@ -54,7 +52,7 @@ function update_product($woocommerce, $xml, $product){
 		$data = array_filter($data, function($value) {
 			return $value !== '' && $value !== null;
 		});
-		if(empty($data)) return error_log("[DEBUG] No data to update for product: {$product->id}", 3 , IMPORT_ERROR_LOG);
+		if(empty($data)) return evalBool($_ENV['DEBUG']) && error_log("[DEBUG] No data to update for product: {$product->id}\r\n", 3 , IMPORT_ERROR_LOG);
 
 		$woocommerce->put("products/{$product->id}", $data);
 	}
