@@ -2,12 +2,13 @@
 require_once  __DIR__ . '/init.php';
 
 $modified_after = (new DateTime('-30 minutes'))->format(DateTime::ATOM);
+$modified_after = (new DateTime('-3 hours'))->format(DateTime::ATOM);
 $per_page = 10;
 $page = 1;
 
 do {
     $params = [
-        'modified_after' => $modified_after,
+        'after' => $modified_after,
         'per_page' => $per_page,
         'page' => $page
     ];
@@ -15,8 +16,10 @@ do {
     try {
         $response = $woocommerce->get('orders', $params);
         $orders = (object)$response;
-
+		
         if ($orders) {
+			//print_r($orders);
+			//print_r(__DIR__);
             foreach ($orders as $order) {
                 $order_number = $order->number;
                 $file_path = __DIR__ . "/export/orders/order-{$order_number}.xml";
@@ -31,7 +34,7 @@ do {
 
                 // Required fields
                 $orderNode->addChild('Ordernummer', $order->number);
-                $orderNode->addChild('StoreNumber', 'DEALER123'); // <-- Replace this with your logic
+                $orderNode->addChild('StoreNumber', '1'); // <-- Replace this with your logic
                 $orderNode->addChild('OrderType', 'Order'); // or 'Reservering'?
                 $orderNode->addChild('OrderDate', date('Y-m-d H:i:s', strtotime($order->date_created)));
                 $orderNode->addChild('TotalOrderAmount', (float)$order->total);
@@ -95,7 +98,7 @@ do {
 						}
 
 					} catch (Exception $e) {
-						error_log("[ERROR][PRODUCT FETCH] Failed for product ID {$item->product_id}: " . $e->getMessage());
+						error_log(date('Y-m-d H:i:s')."[ERROR][PRODUCT FETCH] Failed for product ID {$item->product_id}: " . $e->getMessage()."\r\n", 3 , IMPORT_ERROR_LOG);
 					}
 
 					// Continue with other fields
@@ -106,6 +109,8 @@ do {
 				}
 
                 // Convert XML to string
+
+				file_put_contents(__DIR__ . "/debug-xml/order-{$order_number}.xml", $xml->asXML());
                 $xml_string = $xml->asXML();
                 $xml_string = str_replace('encoding="UTF-8"', 'encoding="UTF-16"', $xml_string);
                 $utf16le_string = mb_convert_encoding($xml_string, 'UTF-16LE', 'UTF-8');
@@ -117,7 +122,7 @@ do {
         }
 
     } catch (Exception $e) {
-        error_log("[ERROR][GET] API Request Failed on page $page: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
+        error_log(date('Y-m-d H:i:s')."[ERROR][GET] API Request Failed on page $page: " . $e->getMessage()."\r\n", 3 , IMPORT_ERROR_LOG);
         break;
     }
 

@@ -1,125 +1,173 @@
-<pre>
 <?php
 require_once  __DIR__ . '/init.php';
 
+$cached_guids = [];
+$category_cache = build_category_cache($woocommerce);
+$attribute_cache = build_attribute_cache($woocommerce);
+
 $files = recursive_scan_dir('tmp/groups');
-foreach($files as $file){
-	if (file_exists(__DIR__.DIRECTORY_SEPARATOR.$file)) {
-		$xml = simplexml_load_file(__DIR__.DIRECTORY_SEPARATOR.$file);
-		//print_r($xml->Groups->Group);
-	
-		foreach ($xml->Groups->Group as $group ){
-			$group_guid = $group->GroupGuid->__toString();
-			$category = get_category_by_guid($woocommerce, $group_guid);
-			if(!$category){
-				//Create categorie
-				create_categorie($woocommerce, $group, $parent = 0);
-			} else {
-				//Update categorie with $category[0]->id
-				update_categorie($woocommerce, $group, $category[0]->id);
-			}
-			//Delve Deeper for sub Categories
-			recursive_subgroup($woocommerce, $group);
-		}
-		unlink(__DIR__.DIRECTORY_SEPARATOR.$file);
-		//error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>");
-	}
-}
-function recursive_subgroup($woocommerce, $xml){
-	//Check if we have reached the bottom
-	if( !$xml->SubGroups->Group ) return error_log("We have reached the bottom.");
-	foreach($xml->SubGroups->Group as $group){
-		$group_guid = $group->GroupGuid->__toString();
-		$category = get_category_by_guid($woocommerce, $group_guid);
-
-		if(!$category){
-			//Get the parent id with parent_guid
-			$parent_guid = $group->Parent_Guid->__toString();
-			$category = get_category_by_guid($woocommerce, $parent_guid);
-			//Create subcategorie
-			create_categorie($woocommerce, $group, $category[0]->id);
-		} else {
-			//Update subcategorie with $category[0]->id
-			update_categorie($woocommerce, $group, $category[0]->id);
-		}
-		//print_r($group);
-		recursive_subgroup($woocommerce, $group);
-	}
-	return $group->GroupName->__toString();
+$options = getopt("a", ["action:"]);
+if (isset($options['a']) && $options['a'] == 'manual' || isset($options['action']) && $options['action'] == 'manual') {
+    $files = recursive_scan_dir('manual/groups');
 }
 
-function create_categorie($woocommerce, $xml, $parent = 0){
-	$data = array_filter([
-		'name'        				=> !empty($xml->GroupName) 				? sanitize_text($xml->GroupName->__toString()) 				: '',
-		'slug'        				=> !empty($xml->GroupUrlName) 			? sanitize_text($xml->GroupUrlName->__toString()) 			: '',
-		'parent' 					=> !empty($parent) 						? intval($parent) 											: '',
-        'description' 				=> !empty($xml->GroupDescription) 		? sanitize_html($xml->GroupDescription->__toString()) 		: '',
-        'menu_order'  				=> !empty($xml->ItemOrder) 				? (int) $xml->ItemOrder->__toString() 						: '',
-        'rank_math_title'  			=> !empty($xml->GroupMetaTitle) 		? sanitize_text($xml->GroupMetaTitle->__toString()) 		: '',
-        'rank_math_focus_keyword'  	=> !empty($xml->GroupMetaKeywords) 		? sanitize_text($xml->GroupMetaKeywords->__toString()) 		: '',
-        'rank_math_description'  	=> !empty($xml->GroupMetaDescription) 	? sanitize_text($xml->GroupMetaDescription->__toString())	: '',
-		'group_guid' 				=> !empty($xml->GroupGuid) 				? sanitize_text($xml->GroupGuid->__toString()) 				: '',
-	], function($value) {
-		return $value !== '' && $value !== null;
-	});
+$total_created = 0;
+$total_updated = 0;
+$total_skipped = 0;
 
-	$data = array_filter($data, function($value) {
-		return $value !== '' && $value !== null;
-	});
-	//Send create request
-	try {
-        $response = $woocommerce->post('products/categories', $data);
-        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-    } catch (Exception $e) {
-        error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
+foreach ($files as $file) {
+    if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
+
+    $xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
+
+    $groupedByDepth = [];
+    foreach ($xml->Groups->Group as $group) {
+        collect_groups_recursively($groupedByDepth, $group, 0);
+    }
+
+    ksort($groupedByDepth); // Parents first
+    foreach ($groupedByDepth as $depth => $groups) {
+        process_category_batches($woocommerce, $groups, $cached_guids, $attribute_cache, $total_created, $total_updated, $total_skipped);
+    }
+
+    unlink(__DIR__ . DIRECTORY_SEPARATOR . $file);
+}
+log_message('SUMMARY', "Created: {$total_created} | Updated: $total_updated | Skipped (missing parent): $total_skipped");
+
+function collect_groups_recursively(&$grouped, $group, $depth = 0) {
+    $grouped[$depth][] = $group;
+    if ($group->SubGroups && $group->SubGroups->Group) {
+        foreach ($group->SubGroups->Group as $subgroup) {
+            collect_groups_recursively($grouped, $subgroup, $depth + 1);
+        }
     }
 }
 
-function update_categorie($woocommerce, $xml, $id) {
-	$taxonomy = $woocommerce->get("products/categories/{$id}");
-	//print_r($taxonomy);
-    // Ensure data is properly sanitized
-	// 'slug'        				=> !empty($xml->GroupUrlName) 				? sanitize_text($xml->GroupUrlName->__toString()) 				: '',	
-	$data = [
-		'name'        				=> (!empty($xml->GroupName) && $taxonomy->name != sanitize_text($xml->GroupName->__toString())) ? sanitize_text($xml->GroupName->__toString()) : '',
-		'slug'        				=> (!empty($xml->GroupUrlName) && $taxonomy->slug != sanitize_text($xml->GroupUrlName->__toString()) ) ? sanitize_text($xml->GroupUrlName->__toString()) 				: '',
-		'description' 				=> (!empty($xml->GroupDescription) && $taxonomy->description != sanitize_html($xml->GroupDescription->__toString())) ? sanitize_html($xml->GroupDescription->__toString()) : '',
-		'menu_order'  				=> (!empty($xml->ItemOrder) && $taxonomy->menu_order != (int) $xml->ItemOrder->__toString()) ? (int) $xml->ItemOrder->__toString() : '',
-		'rank_math_title'			=> (!empty($xml->GroupMetaTitle) && $taxonomy->rank_math_title != sanitize_text($xml->GroupMetaTitle->__toString())) ? sanitize_text($xml->GroupMetaTitle->__toString()) : '',
-		'rank_math_focus_keyword'	=> (!empty($xml->GroupMetaKeywords) && $taxonomy->rank_math_focus_keyword != sanitize_text($xml->GroupMetaKeywords->__toString())) ? sanitize_text($xml->GroupMetaKeywords->__toString()) : '',
-		'rank_math_description'		=> (!empty($xml->GroupMetaDescription) && $taxonomy->rank_math_description != sanitize_text($xml->GroupMetaDescription->__toString())) 	? sanitize_text($xml->GroupMetaDescription->__toString()) : '',
-	];
-	if($xml->Specs){
-		foreach($xml->Specs->Spec as $spec){
-			$attr = get_attribute_by_name($woocommerce, $spec->Name->__toString());
-			if($attr){
-				//print_r($attr);
-				$data['filter_kenmerk'][] = $attr[0]->slug;
-			}
-		}
-	}
+function process_category_batches($woocommerce, $groups, &$cached_guids, $attribute_cache, &$created, &$updated, &$skipped) {
+    $chunks = array_chunk($groups, 100);
 
-	$data = array_filter($data, function($value) {
-		return $value !== '' && $value !== null;
-	});
-	//'group_guid' 	=> isset($xml->GroupGuid) ? sanitize_text($xml->GroupGuid->__toString()) : '',
-	if (empty($data)) return;
-    //Send update request
+    foreach ($chunks as $batch) {
+        $payload = [];
+        $updates = [];
+
+        $guids = array_unique(array_map(fn($g) => (string) $g->GroupGuid, $batch));
+        $uncachedGuids = array_diff($guids, array_keys($cached_guids));
+
+        if (!empty($uncachedGuids)) {
+            cache_categories_by_group_guids($woocommerce, $uncachedGuids, $cached_guids);
+        }
+
+        $existingMap = array_intersect_key($cached_guids, array_flip($guids));
+
+        $parentGuids = array_unique(array_filter(array_map(fn($g) => (string) $g->Parent_Guid, $batch)));
+        $uncachedParents = array_diff($parentGuids, array_keys($cached_guids));
+
+        if (!empty($uncachedParents)) {
+            cache_categories_by_group_guids($woocommerce, $uncachedParents, $cached_guids);
+        }
+
+        $parentMap = [];
+        foreach ($parentGuids as $guid) {
+            if (isset($cached_guids[$guid])) {
+                $parentMap[$guid] = $cached_guids[$guid]->id;
+            }
+        }
+
+        foreach ($batch as $group) {
+            $guid = (string) $group->GroupGuid;
+            $parentGuid = (string) $group->Parent_Guid;
+            $parentId = 0;
+
+            if (!empty($parentGuid) && $parentGuid !== '00000000-0000-0000-0000-000000000000') {
+                if (!isset($parentMap[$parentGuid])) {
+                    error_log(date('Y-m-d H:i:s') . "[SKIP] Parent with GUID {$parentGuid} not found for group {$guid}. Skipping import until parent exists.\r\n", 3, IMPORT_ERROR_LOG);
+                    $skipped++;
+                    continue;
+                }
+                $parentId = $parentMap[$parentGuid];
+            }
+
+            $data = build_category_data($group, $existingMap[$guid], $parentId, $attribute_cache);
+
+            if (isset($existingMap[$guid])) {
+                $current = $existingMap[$guid];
+                if (json_encode($data) !== json_encode((array) $current)) {
+                    $updates[] = ['id' => $current->id, 'data' => $data];
+                }
+            } else {
+                $payload[] = $data;
+            }
+        }
+
+        if (!empty($payload)) {
+            try {
+                $woocommerce->post('products/categories/batch', ['create' => $payload]);
+                $created += count($payload);
+            } catch (Exception $e) {
+                error_log(date('Y-m-d H:i:s') . "[ERROR][POST-BATCH] " . $e->getMessage()."\r\n", 3, IMPORT_ERROR_LOG);
+            }
+        }
+
+        foreach ($updates as $item) {
+            try {
+				//error_log(date('Y-m-d H:i:s') . "[DEBUG][PUT] filter_kenmerk payload: " . print_r($data['filter_kenmerk'], true)."\r\n", 3, IMPORT_ERROR_LOG);
+                $woocommerce->put("products/categories/{$item['id']}", $item['data']);
+                $updated++;
+            } catch (Exception $e) {
+                error_log(date('Y-m-d H:i:s') . "[ERROR][PUT] Update failed for ID {$item['id']}: " . $e->getMessage()."\r\n", 3, IMPORT_ERROR_LOG);
+            }
+        }
+    }
+}
+
+function cache_categories_by_group_guids($woocommerce, $guids, &$cache) {
+    $params = [
+        'group_guid' => $guids,
+        'per_page' => 100,
+    ];
+
     try {
-        $response = $woocommerce->put("products/categories/{$id}", $data);
-        evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] WooCommerce API Response: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-		return $response;
+        evalBool($_ENV['DEBUG']) && error_log(date('Y-m-d H:i:s') . "[DEBUG] Requesting GroupGuids: " . implode(', ', $guids) . "\r\n", 3, IMPORT_ERROR_LOG);
+        $response = $woocommerce->get('products/categories', $params);
+
+        foreach ($response as $cat) {
+            $guid = $cat->GroupGuid ?? $cat->group_guid ?? null;
+            if (!$guid) continue;
+
+            if (!isset($cache[$guid])) {
+                $cache[$guid] = $cat;
+            } else {
+                error_log(date('Y-m-d H:i:s') . "[WARNING] Duplicate GroupGuid in cache set: $guid (existing ID: {$cache[$guid]->id}, new ID: {$cat->id})\r\n", 3, IMPORT_ERROR_LOG);
+            }
+        }
     } catch (Exception $e) {
-		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Input: " . json_encode($data, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-		error_log("[ERROR][PUT] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-		if ($e instanceof \GuzzleHttp\Exception\RequestException && $e->hasResponse()) {
-			$response = json_decode($e->getResponse()->getBody(), true);
-			error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-		}
-		error_log("[ERROR][PUT] Response Body: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-        throw $e; // Re-throw the exception or handle it as needed
+        error_log(date('Y-m-d H:i:s') . "[ERROR][GET] Batch category fetch failed: " . $e->getMessage() . "\r\n", 3, IMPORT_ERROR_LOG);
     }
 }
 
-?>
-</pre>
+function build_category_data($xml, $existingMap, $parent_id = 0, $attribute_cache = []) {
+	//var_dump($existingMap);
+	//die();
+    $data = array_filter([
+        'name' => ( !empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupName->__toString() ?? '') ),
+        'slug' => ( !empty($existingMap->IgnoreVenditGroupURL) ? '' : sanitize_text($xml->GroupUrlName->__toString() ?? '')),
+        'parent' => $parent_id ?: 0,
+        'description' => ( !empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_html($xml->GroupDescription->__toString() ?? '')),
+        'menu_order' => (int) ($xml->ItemOrder->__toString() ?? 0),
+        'rank_math_title' => ( !empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupMetaTitle->__toString() ?? '')),
+        'rank_math_focus_keyword' => ( !empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupMetaKeywords->__toString() ?? '')),
+        'rank_math_description' => ( !empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupMetaDescription->__toString() ?? '')),
+        'group_guid' => sanitize_text($xml->GroupGuid->__toString() ?? '')
+    ]);
+
+    if ($xml->Specs) {
+        foreach ($xml->Specs->Spec as $spec) {
+            $name = strtolower($spec->Name->__toString());
+            if (isset($attribute_cache[$name])) {
+                $data['filter_kenmerk'][] = $attribute_cache[$name]->slug;
+            }
+        }
+    }
+
+    return $data;
+}

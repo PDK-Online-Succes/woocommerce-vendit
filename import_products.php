@@ -1,955 +1,440 @@
-<pre>
 <?php
-require_once  __DIR__ . '/init.php';
+require_once __DIR__ . '/init.php';
+log_message('INFO', '=== START OF IMPORT_PRODUCTS.PHP ===');
 
 $files = recursive_scan_dir('tmp/products');
-foreach($files as $file){
-	if (file_exists(__DIR__.DIRECTORY_SEPARATOR.$file)) {
-		$xml = simplexml_load_file(__DIR__.DIRECTORY_SEPARATOR.$file);
-		global $create;
-		$create=0;
-		$update=0;
-		$delete=0;
-		$total=0;
-		$i=0;
-		foreach ($xml->Products->Product as $item ){
-			$total++;
-			$EcommerceProductGuid = $item->EcommerceProductGuid->__toString();
-			$product = get_product_by_guid($woocommerce, $EcommerceProductGuid);
-			if(!$product && $item->IsDeleted->__toString() === "False"){
-				$create++;
-				//Create product
-				create_product($woocommerce, $item);
-			} else {
-				if($item->IsDeleted->__toString() === "False"){
-					$update++;
-					$product = $woocommerce->get("products/{$product[0]->id}");
-					//Update product with $product[0]->id
-					update_product($woocommerce, $item, $product->id);
-				} else {
-					if($product){
-						$delete++;
-						//Delete product with $product[0]->id
-						$woocommerce->delete("products/{$product[0]->id}", ['force' => true]);
-					}
-				}
-			}
-			$i++; 
-			//if($i == 10) break;
-		}
-		unlink(__DIR__.DIRECTORY_SEPARATOR.$file);
-		error_log("[COMPLETE] Total: {$total} - Created: {$create} - Updated: {$update} - Deleted: {$delete}<br>", 3 , IMPORT_ERROR_LOG);
-	}
+$options = getopt("a", ["action:"]);
+if ((isset($options['a']) && $options['a'] === 'manual') || (isset($options['action']) && $options['action'] === 'manual')) {
+    $manual = true;
+    $files = recursive_scan_dir('manual/products');
 }
 
-function create_product($woocommerce, $xml){
-	global $create;
-	 $data = [
-		'name'        				=> !empty($xml->Description) 				? sanitize_text($xml->Description->__toString()) 				: '',
-		'description' 				=> !empty($xml->ProductDescription) 		? sanitize_html($xml->BigInfo->__toString()) 					: '',
-		'short_description' 		=> !empty($xml->ProductShortDescription) 	? sanitize_html($xml->SmallInfo->__toString()) 					: '',
-		'featured'					=> !empty($xml->FrontPage) 					? $xml->FrontPage->__toString()									: '',	
-		'EcommerceProductGuid' 				=> !empty($xml->EcommerceProductGuid) 		? sanitize_text($xml->EcommerceProductGuid->__toString()) 		: '',
-		'ProductNumber' 				=> !empty($xml->ProductNumber) 				? sanitize_text($xml->ProductNumber->__toString()) 				: '',
-		'rank_math_title'  			=> !empty($xml->PageTitle) 			? sanitize_text($xml->PageTitle->__toString()) 			: '',
-        'rank_math_focus_keyword'  	=> !empty($xml->MetaKeywords) 			? sanitize_text($xml->MetaKeywords->__toString()) 			: '',
-        'rank_math_description'  	=> !empty($xml->MetaDescription) 		? sanitize_text($xml->MetaDescription->__toString())		: '',
-	];
-	if(!$xml->ProductVariations) { 
-		$create--;
-		return error_log( "[ERROR] No Variations Found: " . print_r( $xml, true ) , 3 , IMPORT_ERROR_LOG);
-	}
+$total = $create = $update = $delete = 0;
 
-	$count = $xml->ProductVariations->ProductVariation->count();
-	//echo "Variation Count: {$count}<br>";
+$total_products = 0;
+$total_created = 0;
+$total_updated = 0;
+$total_deleted = 0;
 
-	if($xml->Brand){
-		$brand = get_brand($woocommerce, $xml->Brand->__toString());
-		if(!$brand){
-			$brand = create_brand($woocommerce, $xml->Brand->__toString());
-		}	
-		$data['brands'][] = [
-			'id' => is_array($brand) ? $brand[0]->id : $brand->id
-		];
-		$data['meta_data'][] = [
-			'key' => 'rank_math_primary_product_brand',
-			'value' => is_array($brand) ? $brand[0]->id : $brand->id
-		];
-	}
+$total_variations_created = 0;
+$total_variations_updated = 0;
+$total_variations_deleted = 0;
 
-	foreach($xml->Groups->ProductGroup as $group){
-		$category = get_category_by_guid($woocommerce, $group->__toString());
-		$data['categories'][] = [
-			'id' => $category[0]->id
-		];
-		if((string)$group['Default'] === "True"){
-			//$default = $categorie[0]->id;
-			//echo "Default ProductGroup ID: " . (string)$group . "\n";
-			$data['meta_data'][] = [
-				'key' => '_primary_term_product_cat',
-				'value' => $category[0]->id
-			];
-			$data['meta_data'][] = [
-				'key' => 'rank_math_primary_product_cat',
-				'value' => $category[0]->id
-			];
-			if ($category && isset($category[0])) {
-                $primary_category_name = $category[0]->name;
+$brand_cache = build_brand_cache($woocommerce);
+$attribute_cache = build_attribute_cache($woocommerce);
+$term_cache = build_term_cache($woocommerce, $attribute_cache);
+$category_cache = build_category_cache($woocommerce);
+
+// Verzamel alle GUIDs
+$product_guids = [];
+foreach ($files as $file) {
+    if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
+    $xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
+    foreach ($xml->Products->Product as $item) {
+        $product_guids[] = (string)$item->EcommerceProductGuid;
+    }
+}
+//error_log("Unique GUIDs to fetch: " . json_encode(array_unique($product_guids))."\r\n", 3, IMPORT_ERROR_LOG);
+//log_message('INFO', "Unique GUIDs to fetch: " . json_encode(array_unique($product_guids)));
+
+global $product_map;
+$product_map = get_products_by_guids_batch($woocommerce, array_unique($product_guids));
+
+log_message('INFO', '=== START PRODUCTIMPORT ===');
+
+process_products_from_xml($woocommerce, $files, $product_map, $attribute_cache, $term_cache, $brand_cache, $category_cache);
+
+process_variations_from_xml_files($woocommerce, $files, $product_map, $attribute_cache, $term_cache, $category_cache);
+
+log_message('INFO', '=== SAMENVATTING PRODUCTIMPORT ===');
+log_message('INFO', "Totaal producten gevonden:      $total_products");
+log_message('INFO', "Producten aangemaakt:           $total_created");
+log_message('INFO', "Producten bijgewerkt:           $total_updated");
+log_message('INFO', "Producten verwijderd:           $total_deleted");
+log_message('INFO', "Variaties aangemaakt:           $total_variations_created");
+log_message('INFO', "Variaties bijgewerkt:           $total_variations_updated");
+log_message('INFO', "Variaties verwijderd:           $total_variations_deleted");
+log_message('INFO', '=== EINDE PRODUCTIMPORT ===');
+
+function process_products_from_xml($woocommerce, $xml_files, $product_map, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache) {
+    $create = [];
+    $update = [];
+    $delete = [];
+
+    foreach ($xml_files as $file) {
+        if (!file_exists(__DIR__ . '/' . $file)) continue;
+
+        $xml = simplexml_load_file(__DIR__ . '/' . $file);
+
+        foreach ($xml->Products->Product as $product_xml) {
+            $guid = (string)$product_xml->EcommerceProductGuid;
+            clean_deleted_variations($product_xml);
+
+            // Verwijderen
+            if (strtolower((string)$product_xml->IsDeleted) === 'true') {
+                if (isset($product_map[$guid])) {
+                    $delete[] = ['id' => $product_map[$guid]->id];
+                }
+                continue;
             }
-		}
-	}
 
-	$combined_images = get_combined_images_from_xml($xml);
-	$current_images = $product->images ?? [];
+            // Type bepalen (simple, variable, bundled)
+            $variations = $product_xml->ProductVariations->ProductVariation ?? [];
+            $bundle     = $product_xml->MandatoryProducts->MandatoryProduct ?? [];
 
-	if (images_changed($current_images, $combined_images)) {
-		$data['images'] = $combined_images;
-	}
-	if (empty($combined_images) && !empty($current_images)) {
-		$data['images'] = [];
-	}
-
-	$data['attributes'] = build_combined_attributes_from_xml($xml, $woocommerce);
-
-	// Deduplicate the images by `src` values
-	if (isset($data['images']) && is_array($data['images'])) {
-		$data['images'] = array_unique($data['images'], SORT_REGULAR);
-	}
-
-	$link_ids = get_linked_product_ids_from_xml($xml, $woocommerce);
-
-	if (!empty($link_ids['upsell_ids'])) {
-		$data['upsell_ids'] = [$link_ids['upsell_ids']];
-		//print_r($data['upsell_ids']);
-	}
-
-	if (!empty($link_ids['cross_sell_ids'])) {
-		$data['cross_sell_ids'] = [$link_ids['cross_sell_ids']];
-		//print_r($data['cross_sell_ids']);
-	}
-	
-	
-	//print_r($data['images']);
-
-	//check if ProductVariation is only one or multiple
-	if($count > 1){
-		$data['type'] = 'variable';
-		$data['sku'] = !empty($xml->ProductNumber) ? sanitize_text($xml->ProductNumber->__toString()) : '';
-
-		$data = array_filter($data, function($value) {
-			return $value !== '' && $value !== null;
-		});
-		//Create Product
-		try {
-			$response = $woocommerce->post('products', $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Product Create: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-
-			foreach ($xml->ProductVariations->ProductVariation as $variation){
-				$guid = $variation->EcommerceProductVariationGuid->__toString();
-
-				$variation_check = get_product_variation_by_guid($woocommerce, $response->id, $guid);
-				if(!$variation_check){
-					//Create ProductVariation
-					create_product_variation($woocommerce, $variation, $response->id, $xml->ProductNumber->__toString(), $primary_category_name, $xml->StockProduct->__toString());
-				}
-				//create_product_variation($woocommerce, $variation, "123", $xml->ProductNumber->__toString());
-			}
-			//print_r($data);
-		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-		}
-	} else {
-		$data['type'] = 'simple';
-		$data['sku'] = ( !empty($xml->ProductNumber) && !empty($xml->ProductVariations->ProductVariation->ProductId) ) ? sanitize_text($xml->ProductNumber->__toString().'_'.$xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
-		$data['regular_price'] = !empty($xml->ProductVariations->ProductVariation->SalesPriceInc) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') : '';
-		$data['ProductId'] = !empty($xml->ProductVariations->ProductVariation->ProductId) ? sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
-		$data['manage_stock'] =  !empty($xml->StockProduct) ? strtolower(sanitize_text($xml->StockProduct->__toString())) : '';
-
-		if($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice){
-			$data['sale_price'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') : '';
-			$data['date_on_sale_from'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) : '';
-			$data['date_on_sale_to'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd->__toString()) : '';
-		}
-
-		$data = array_filter($data, function($value) {
-			return $value !== '' && $value !== null;
-		});
-		//Create Product
-
-		try {
-
-			$response = $woocommerce->post('products', $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Product Create: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-			
-		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-		}
-		
-	}
-	//print_r($data);
-	
-}
-function create_product_variation($woocommerce, $xml, $product_id, $sku, $primary_category_name, $stock=''){
-
-		$data['sku'] = !empty($xml->ProductId) ? sanitize_text($sku.'_'.$xml->ProductId->__toString()) : '';
-		$data['regular_price'] = !empty($xml->SalesPriceInc) ? number_format(sanitize_text($xml->SalesPriceInc->__toString()),4,'.','') : '';
-		$data['EcommerceProductVariationGuid'] = !empty($xml->EcommerceProductVariationGuid) ? sanitize_text($xml->EcommerceProductVariationGuid->__toString()) : '';
-		$data['ProductId'] = !empty($xml->ProductId) ? sanitize_text($xml->ProductId->__toString()) : '';
-		$data['manage_stock'] =  !empty($stock) ? strtolower(sanitize_text($stock)) : '';
-		
-		foreach($xml->Attributes->Attribute as $attr){
-			if( !empty($attr->SortOrder) ){
-				$data['menu_order'] = (int)$attr->SortOrder;
-				break;
-			}
-		}
-		
-		if($xml->ActionPrices->ActionPrice){
-			$data['sale_price'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') : '';
-			$data['date_on_sale_from'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) : '';
-			$data['date_on_sale_to'] = !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd->__toString()) : '';
-		}
-	
-		if($xml->Images->Image){
-			foreach($xml->Images->Image as $img){
-				if((int)$img['ImageOrder'] === 0) $data['image'] = get_images($img);
-			}
-		}
-
-		$variation_attributes = build_variation_attributes_from_xml($xml, $primary_category_name, $woocommerce);
-
-		if (!empty($variation_attributes)) {
-			$data['attributes'] = $variation_attributes;
-		}
-
-		$data = array_filter($data, function($value) {
-			return $value !== '' && $value !== null;
-		});
-
-		//return $woocommerce->post("products/{$product_id}/variations", $data);
-		try {
-			$response = $woocommerce->post("products/{$product_id}/variations", $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Variation Create: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-		}
-
-	//print_r($data);
-
-}
-function update_product($woocommerce, $xml, $product_id){
-
-	$product = $woocommerce->get("products/{$product_id}");
-
-	$data['name']        				= ( !empty($xml->Description) && $product->name != sanitize_text($xml->Description->__toString()))										? sanitize_text($xml->Description->__toString()) 				: '';
-	$data['description']				= ( !empty($xml->BigInfo) && $product->description != sanitize_html($xml->BigInfo->__toString())) 										? sanitize_html($xml->BigInfo->__toString()) 					: '';
-	$data['short_description'] 			= ( !empty($xml->SmallInfo) && $product->short_description != sanitize_html($xml->SmallInfo->__toString())) 							? sanitize_html($xml->SmallInfo->__toString()) 					: '';
-	$data['featured']					= ( !empty($xml->FrontPage) && (!empty($product->featured) && $product->featured != strtolower($xml->FrontPage->__toString())) ) 										? strtolower($xml->FrontPage->__toString())						: '';
-	$data['EcommerceProductGuid'] 		= ( !empty($xml->EcommerceProductGuid) && $product->EcommerceProductGuid != sanitize_text($xml->EcommerceProductGuid->__toString()))  	? sanitize_text($xml->EcommerceProductGuid->__toString()) 		: '';
-	$data['ProductNumber'] 				= ( !empty($xml->ProductNumber) && $product->ProductNumber != sanitize_text($xml->ProductNumber->__toString()))							? sanitize_text($xml->ProductNumber->__toString()) 				: '';
-	$data['rank_math_title']  			= ( !empty($xml->PageTitle) && $product->rank_math_title != sanitize_text($xml->PageTitle->__toString()))								? sanitize_text($xml->PageTitle->__toString()) 					: '';
-    $data['rank_math_focus_keyword'] 	= ( !empty($xml->MetaKeywords) && $product->rank_math_focus_keyword != sanitize_text($xml->MetaKeywords->__toString())) 				? sanitize_text($xml->MetaKeywords->__toString()) 				: '';
-    $data['rank_math_description']  	= ( !empty($xml->MetaDescription) && $product->rank_math_description != sanitize_text($xml->MetaDescription->__toString()))				? sanitize_text($xml->MetaDescription->__toString())			: '';
-
-	if(!$xml->ProductVariations) return "Error No ProductVariations";
-	$count = $xml->ProductVariations->ProductVariation->count();
-	//echo "Variation Count: {$count}<br>";
-
-	if($xml->Brand){
-		$brand = get_brand($woocommerce, $xml->Brand->__toString());
-		if(!$brand){
-			$brand = create_brand($woocommerce, $xml->Brand->__toString());
-		}
-		$new_brand_id = is_array($brand) ? $brand[0]->id : $brand->id;
-    	$current_brand_id = isset($product->brands[0]->id) ? $product->brands[0]->id : null;
-
-		if ($current_brand_id != $new_brand_id) {
-			$data['brands'][] = [
-				'id' => $new_brand_id
-			];
-			$data['meta_data'][] = [
-				'key' => 'rank_math_primary_product_brand',
-				'value' => $new_brand_id
-			];
-		}
-	}
-
-	// Get current categories from the product
-	$current_category_ids = array_map(function($cat) {
-		return $cat->id;
-	}, $product->categories);
-
-	// Build new category list from XML
-	$new_category_ids = [];
-	$meta_data = [];
-
-	foreach ($xml->Groups->ProductGroup as $group) {
-		$category = get_category_by_guid($woocommerce, $group->__toString());
-
-		if (!$category || !isset($category[0])) {
-			continue; // Skip if not found
-		}
-
-		$cat_id = $category[0]->id;
-		$new_category_ids[] = $cat_id;
-
-		if ((string)$group['Default'] === "True") {
-			$meta_data[] = [
-				'key' => '_primary_term_product_cat',
-				'value' => $cat_id
-			];
-			$data['meta_data'][] = [
-				'key' => 'rank_math_primary_product_cat',
-				'value' => $cat_id
-			];
-            if ($category && isset($category[0])) {
-                $primary_category_name = $category[0]->name;
+            if (count($variations) === 1 && count($bundle) === 0) {
+                $type = 'simple';
+            } elseif (count($variations) === 1 && count($bundle) > 0) {
+                $type = 'bundle';
+            } else {
+                $type = 'variable';
             }
-		}
-	}
 
-	// Compare current vs new
-	$categories_changed = array_diff($new_category_ids, $current_category_ids) || array_diff($current_category_ids, $new_category_ids);
+            // ➕ Nieuw product
+            if (!isset($product_map[$guid])) {
+				//log_message('CREATE', "GUID:  {$guid}" );
+                $create[] = build_product_payload($product_xml, $type, null, $attribute_cache, $term_cache, $brand_cache, $category_cache, $product_map);
+            } else {
+				//log_message('UPDATE', "GUID:  {$guid}" );
+                // ✏️ Bestaand product: update indien nodig
+                $existing = $product_map[$guid];
+                $new_data = build_product_payload($product_xml, $type, $existing, $attribute_cache, $term_cache, $brand_cache, $category_cache, $product_map);
+                if ($new_data !== null) {
 
-	if ($categories_changed) {
-		$data = [
-			'categories' => array_map(function($id) {
-				return ['id' => $id];
-			}, $new_category_ids),
-		];
+                    $update[] = $new_data;
+                }
+            }
+        }
+    }
 
-		if (!empty($meta_data)) {
-			$data['meta_data'] = $meta_data;
-		}
-	}
-	$combined_images = get_combined_images_from_xml($xml);
-	$current_images = $product->images ?? [];
-
-	if (images_changed($current_images, $combined_images)) {
-		$data['images'] = $combined_images;
-	}
-	if (empty($combined_images) && !empty($current_images)) {
-		$data['images'] = [];
-	}
-
-	$combined_attributes = build_combined_attributes_from_xml($xml, $woocommerce);	
-	if (attributes_changed($product->attributes, $combined_attributes)) {
-		$data['attributes'] = $combined_attributes;
-		//print_r($data['attributes']);
-	}
-
-	$link_ids = get_linked_product_ids_from_xml($xml, $woocommerce);
-
-	if (!empty($link_ids['upsell_ids'])) {
-		$data['upsell_ids'] = $link_ids['upsell_ids'];
-		//print_r($data['upsell_ids']);
-	}
-
-	if (!empty($link_ids['cross_sell_ids'])) {
-		$data['cross_sell_ids'] = $link_ids['cross_sell_ids'];
-		//print_r($data['cross_sell_ids']);
-	}
-
-	//print_r($combined_attributes);
-
-	//check if ProductVariation is only one or multiple
-	if($count > 1){
-		//$data['type'] = $product->type != 'variable' ? 'variable' : '';
-		$data['sku'] = ( !empty($xml->ProductNumber) && $product->sku != sanitize_text($xml->ProductNumber->__toString()) ) ? sanitize_text($xml->ProductNumber->__toString()) : '';
-
-		$data = array_filter($data, function($value) {
-			return $value !== '' && $value !== null;
-		});
-
-		//Update Product
-		try {
-			$response = $woocommerce->put("products/{$product->id}", $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Product Update: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-
-			foreach ($xml->ProductVariations->ProductVariation as $variation){
-				$guid = $variation->EcommerceProductVariationGuid->__toString();
-
-				$variation_check = get_product_variation_by_guid($woocommerce, $response->id, $guid);
-				if(!$variation_check && $variation->IsDeleted->__toString() === "False"){
-					//Create ProductVariation
-					create_product_variation($woocommerce, $variation, $response->id, $response->sku, $primary_category_name, $xml->StockProduct->__toString());
-				} elseif ($variation_check) {
-					if($variation->IsDeleted->__toString() === "True"){
-						$woocommerce->delete("products/{$response->id}/variations/{$variation_check[0]->id}", ['force' => true]);
-					} else {
-						//Update ProductVariation
-						update_product_variation($woocommerce, $variation, $response->id, $variation_check[0]->id, $response->sku, $primary_category_name);
-					}
-				}
-
-				//create_product_variation($woocommerce, $variation, "123", $xml->ProductNumber->__toString());
-			}
-			//print_r($data);
-		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-		}
-	} else {
-		//$data['type'] = $product->type != 'simple' ? 'simple' : '';
-		$data['sku'] = ( !empty($xml->ProductNumber) && !empty($xml->ProductVariations->ProductVariation->ProductId) && $product->sku != sanitize_text($xml->ProductNumber->__toString().'_'.$xml->ProductVariations->ProductVariation->ProductId->__toString()) ) ? sanitize_text($xml->ProductNumber->__toString().'_'.$xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
-		$data['regular_price'] = ( !empty($xml->ProductVariations->ProductVariation->SalesPriceInc) && $product->regular_price != number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') ) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') : '';
-		//echo "Product Regular Price: {$product->regular_price}  - " . number_format(sanitize_text($xml->ProductVariations->ProductVariation->SalesPriceInc->__toString()),4,'.','') . "<br>";
-		$data['ProductId'] = ( !empty($xml->ProductVariations->ProductVariation->ProductId) && $product->ProductId != sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString())) ? sanitize_text($xml->ProductVariations->ProductVariation->ProductId->__toString()) : '';
-		$data['manage_stock'] = ( !empty($xml->StockProduct) && ( !empty($product->manage_stock) && $product->manage_stock != strtolower(sanitize_text($xml->StockProduct->__toString())) )) ? strtolower(sanitize_text($xml->StockProduct->__toString())) : '';
-
-		if($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice){
-			$data['sale_price'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc) && $product->sale_price != number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') ) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') : '';
-			$data['date_on_sale_from'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart) && $product->date_on_sale_from != sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) ) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) : '';
-			$data['date_on_sale_to'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd) && $product->date_on_sale_to != sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd->__toString()) ) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd->__toString()) : '';
-		}
-
-		$data = array_filter($data, function($value) {
-			return $value !== '' && $value !== null;
-		});
-		//Create Product
-
-		try {
-
-			$response = $woocommerce->put("products/{$product->id}", $data);
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Product Update: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-			
-		} catch (Exception $e) {
-			error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-		}
-		
-	}
-	//print_r($data);
-}
-//$woocommerce, $xml, $product_id, $sku
-function update_product_variation($woocommerce, $xml, $product_id, $variation_id, $sku, $primary_category_name, $stock=''){
-	$variation = $woocommerce->get("products/{$product_id}/variations/{$variation_id}");
-
-	$data['sku'] = ( !empty($xml->ProductId) && $variation->sku != sanitize_text($sku.'_'.$xml->ProductId->__toString()) ) ? sanitize_text($sku.'_'.$xml->ProductId->__toString()) : '';
-	$data['regular_price'] = ( !empty($xml->SalesPriceInc) && $variation->regular_price != number_format(sanitize_text($xml->SalesPriceInc->__toString()),4,'.','')  ) ? number_format(sanitize_text($xml->SalesPriceInc->__toString()),4,'.','')  : '';
-	$data['EcommerceProductVariationGuid'] = ( !empty($xml->EcommerceProductVariationGuid) && $variation->EcommerceProductVariationGuid != sanitize_text($xml->EcommerceProductVariationGuid->__toString())) ? sanitize_text($xml->EcommerceProductVariationGuid->__toString()) : '';
-	$data['ProductId'] = !empty($xml->ProductId) ? sanitize_text($xml->ProductId->__toString()) : '';
-	$data['manage_stock'] = ( !empty($stock) && (!empty($variation->manage_stock) && $variation->manage_stock != strtolower(sanitize_text($stock)) ) ) ? strtolower(sanitize_text($stock)) : '';
-	
-	if($xml->Attributes->Attribute){
-		foreach($xml->Attributes->Attribute as $attr){
-			if( !empty($attr->SortOrder) ){
-				$data['menu_order'] = $variation->menu_order != (int)$attr->SortOrder ? (int)$attr->SortOrder : '';
-				break;
-			}
-		}
-	}
-	
-	//$data['menu_order'] =( !empty($xml->Attributes->Attribute->SortOrder) && $variation->menu_order != (int)$xml->Attributes->Attribute->SortOrder ) ? (int)$xml->Attributes->Attribute->SortOrder : 0;
-
-	if($xml->ActionPrices->ActionPrice){
-		$data['sale_price'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc) && $variation->sale_price != number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') ) ? number_format(sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionPriceInc->__toString()),4,'.','') : '';
-			$data['date_on_sale_from'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart) && $variation->date_on_sale_from != sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) ) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionStart->__toString()) : '';
-			$data['date_on_sale_to'] = ( !empty($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd) && $variation->date_on_sale_to != sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd->__toString()) ) ? sanitize_text($xml->ProductVariations->ProductVariation->ActionPrices->ActionPrice->ActionEnd->__toString()) : '';
-	}
-
-	if ($xml->Images->Image) {
-		foreach ($xml->Images->Image as $img) {
-			if ((int)$img['ImageOrder'] === 0) {
-				$new_image = get_images($img);
-				$current_image = $variation->image ?? null;
-	
-				if (variation_image_changed($current_image, $new_image)) {
-					$data['image'] = $new_image;
-				}
-				break; // only one image needed
-			}
-		}
-	} else {
-		// No image in XML, but current variation has one — clear it
-		if (!empty($variation->image)) {
-			$data['image'] = null;
-		}
-	}
-	$variation_attributes = build_variation_attributes_from_xml($xml, $primary_category_name, $woocommerce);
-
-	// Fetch current attributes for comparison
-	$variation = $woocommerce->get("products/{$product_id}/variations/{$variation_id}");
-	$current_attributes = $variation->attributes ?? [];
-
-	if (variation_attributes_changed($current_attributes, $variation_attributes)) {
-		$data['attributes'] = $variation_attributes;
-	}
-
-	$data = array_filter($data, function($value) {
-		return $value !== '' && $value !== null;
-	});
-
-	//return $woocommerce->post("products/{$product_id}/variations", $data);
-	try {
-		$response = $woocommerce->put("products/{$product_id}/variations/{$variation->id}", $data);
-		evalBool($_ENV['DEBUG']) && error_log("[DEBUG][PUT] Variation Update: " . json_encode($response, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-	} catch (Exception $e) {
-		error_log("[ERROR][POST] API Request Failed: " . $e->getMessage(), 3 , IMPORT_ERROR_LOG);
-	}
+    // Laatste batch
+    flush_product_batches($woocommerce, $product_map, $create, $update, $delete);
 }
 
-function create_attribute($woocommerce, $name){
-	$attribute = [
-		'name' => $name,
-		'slug' => 'pa_'.sanitize_slug($name),
-		'type' => 'select',
-		'order_by' => 'menu_order',
-		'has_archives' => true
-	];
-	//Create attribute
-	$response = $woocommerce->post('products/attributes', $attribute);
-	return $response;
-}
-function create_attribute_term($woocommerce, $attribute_id, $term){
-	$term = [
-		'name' => $term,
-		'slug' => sanitize_slug($term)
-	];
-	//Create attribute
-	$response = $woocommerce->post("products/attributes/{$attribute_id}/terms", $term);
-	return $response;
-}
-function map_attribute_name($original_name, $primary_category_name) {
-    $name = strtolower(trim($original_name));
-    $category = strtolower(trim($primary_category_name));
+function build_product_payload($xml, $type, $existing = null, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache, &$product_map) {
+    $guid = (string)$xml->EcommerceProductGuid;
+    $product_number = (string)$xml->ProductNumber;
+    $name = (string)$xml->Description;
+    $brand_name = (string)$xml->Brand;
+    $short_description = (string)$xml->SmallInfo;
+    $description = (string)$xml->BigInfo;
 
-    // Define attribute renaming rules
-    $attribute_map = [
-        //'color' => 'Kleur',
-		'color' => [
-			'luchtbuks' => 'Joule',
-			'luchtbuks / geweer' => 'Joule',
-			'luchtdrukpistool' => 'Joule',
-			'luchtdrukmunitie' => 'Joule',
-			'pcp buks' => 'Joule',
-			'veer buks' => 'Joule',
-			'buks to 7.5j' => 'Joule',
-			'buks van 7.5 - 100j' => 'Joule',
-			'buks van 100 - 500j' => 'Kaliber',
-			'buks 500j+' => 'Joule',
-			'veer pistool' => 'Joule',
-			'pistool tot 7.5j' => 'Joule',
-		],
-        'size' => [
-			//Kleding
-            'broeken' => 'Broekmaat',
-            'schoenen' => 'Schoenmaat',
-            'laarzen' => 'Schoenmaat',
-			//Wapens
-			'luchtbuks' => 'Kaliber',
-			'luchtbuks / geweer' => 'Kaliber',
-			'luchtdrukpistool' => 'Kaliber',
-			'luchtdrukmunitie' => 'Kaliber',
-			'pcp buks' => 'Kaliber',
-			'veer buks' => 'Kaliber',
-			'buks to 7.5j' => 'Kaliber',
-			'buks van 7.5 - 100j' => 'Kaliber',
-			'buks van 100 - 500j' => 'Kaliber',
-			'buks 500j+' => 'Kaliber',
-			'veer pistool' => 'Kaliber',
-			'pistool tot 7.5j' => 'Kaliber',
-			'pellets' => 'Kaliber',
-			'jacht' => 'Kaliber',
-			'wapen' => 'Kaliber',
-			'groot kaliber geweer' => 'Kaliber',
-			'klein kaliber geweer' => 'Kaliber',
-			'schietsport' => 'Kaliber',
-			'klein kaliber pistool' => 'Kaliber',
-			'groot kaliber pistool' => 'Kaliber',
-			//Kijkers
-			'kijkers' => 'Vergroting',
-			'verrekijkers' => 'Vergroting',
-			'monokijkers' => 'Vergroting',
-			'spotting scope' => 'Vergroting',
-			'afstand meter' => 'Vergroting',
-            // You can add more here
-        ]
+	$featured = (string)$xml->FrontPage;
+	$rankmath_title = (string)$xml->PageTitle;
+	$rankmath_focus_keyword = (string)$xml->MetaKeywords;
+	$rankmath_description = (string)$xml->MetaDescription;
+
+    $images = get_combined_images_from_xml($xml);
+
+    $categories = [];
+    $primary_cat_id = null;
+    $primary_cat_name = '';
+
+    if (isset($xml->Groups->ProductGroup)) {
+        foreach ($xml->Groups->ProductGroup as $group) {
+            $group_guid = (string)$group;
+            $is_primary = strtolower((string)$group['Default']) === 'true';
+
+            if (isset($category_cache[$group_guid])) {
+                $cat = $category_cache[$group_guid];
+                $cat_entry = ['id' => $cat->id];
+
+                if ($is_primary || !$primary_cat_id) {
+                    $primary_cat_id = $cat->id;
+                    $primary_cat_name = $cat->name ?? '';
+                    array_unshift($categories, $cat_entry);
+                } else {
+                    $categories[] = $cat_entry;
+                }
+            }
+        }
+    }
+
+    $brand = get_brand_cached($brand_name, $brand_cache, $GLOBALS['batch_create_brands']);
+    $brand_id = $brand->id ?? null;
+
+    $attr_data = extract_attributes_from_spec_and_variation(
+        $xml,
+        $type,
+        $primary_cat_name,
+        $attribute_cache,
+        $term_cache
+    );
+
+    $all_attributes = array_merge(
+        $attr_data['attributes'] ?? [],
+        $attr_data['variation_attributes'] ?? []
+    );
+
+    $product_data = [
+        'name' => $name,
+        'description' => $description,
+        'short_description' => $short_description,
+        'type' => $type,
+		'featured' => $featured,
+        'status' => (strtolower((string)$xml->Visible) === 'true') ? 'publish' : 'draft',
+        'categories' => $categories,
+        'images' => $images ?: [],
+        'sku' => ($type === 'variable') ? $product_number : null,
+        'EcommerceProductGuid' => $guid,
+        'ProductNumber' => $product_number,
+		'rank_math_title' => $rankmath_title,
+        'rank_math_focus_keyword' => $rankmath_focus_keyword,
+        'rank_math_description' => $rankmath_description,
     ];
 
-    // Global attribute mapping (e.g. color)
-    if (isset($attribute_map[$name]) && is_string($attribute_map[$name])) {
-        return $attribute_map[$name];
-    }
-
-    // Category-based mapping (e.g. size)
-    if (isset($attribute_map[$name]) && is_array($attribute_map[$name])) {
-        if (isset($attribute_map[$name][$category])) {
-            return $attribute_map[$name][$category];
-        }
-
-        // ❗ Default fallback for "size" if category not mapped
-        if ($name === 'size')  return 'Maat';
-		if ($name === 'color') return 'Kleur';
-    }
-
-    // No match? Keep the original name
-    return $original_name;
-}
-function build_combined_attributes_from_xml($xml, $woocommerce) {
-    $attributes = [];
-    $variation_attribute_map = [];
-    $variation_attribute_names_mapped = [];
-
-    // STEP 0: Determine primary category name
-    $primary_category_name = null;
-    foreach ($xml->Groups->ProductGroup as $group) {
-        if ((string) $group['Default'] === 'True') {
-            $category = get_category_by_guid($woocommerce, (string) $group);
-            if ($category && isset($category[0])) {
-                $primary_category_name = $category[0]->name;
-            }
-            break;
-        }
-    }
-
-    // STEP 1: Collect variation attribute values
-    if ($xml->ProductVariations && $xml->ProductVariations->ProductVariation) {
-        foreach ($xml->ProductVariations->ProductVariation as $variation) {
-            if ($variation->Attributes) {
-                foreach ($variation->Attributes->Attribute as $attr) {
-                    $original_name = (string) $attr->Name;
-                    $mapped_name = map_attribute_name($original_name, $primary_category_name);
-
-                    $variation_attribute_map[$mapped_name][] = (string) $attr->Value;
-                    $variation_attribute_names_mapped[$mapped_name] = true;
-                }
-            }
-        }
-    }
-
-    // STEP 2: Process specs, skipping mapped names used by variations
-    if ($xml->Specs) {
-        foreach ($xml->Specs->Spec as $spec) {
-            $original_name = (string) $spec->Name;
-            $mapped_name = map_attribute_name($original_name, $primary_category_name);
-
-            if (isset($variation_attribute_names_mapped[$mapped_name])) {
-                continue; // Variation version takes priority
-            }
-
-            $value = (string) $spec->Value;
-            $split_values = array_map('trim', explode(',', $value));
-
-            $attribute = get_attribute_by_name($woocommerce, $mapped_name);
-            if (!$attribute) {
-                $attribute = create_attribute($woocommerce, $mapped_name);
-            }
-
-            $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-            $attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
-
-            $term_names = [];
-            foreach ($split_values as $val) {
-                if ($val === '') continue;
-
-                $term = get_attribute_term_by_name($woocommerce, $attribute_id, $val);
-                if (!$term) {
-                    $term = create_attribute_term($woocommerce, $attribute_id, $val);
-                }
-
-                $term_names[] = is_array($term) ? $term[0]->name : $term->name;
-            }
-
-            $attributes[] = [
-                'id' => $attribute_id,
-                'name' => $attribute_name,
-                'visible' => true,
-                'variation' => false,
-                'options' => $term_names
-            ];
-        }
-    }
-
-    // STEP 3: Add variation attributes
-    foreach ($variation_attribute_map as $mapped_name => $values) {
-        $attribute = get_attribute_by_name($woocommerce, $mapped_name);
-        if (!$attribute) {
-            $attribute = create_attribute($woocommerce, $mapped_name);
-        }
-
-        $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
-        $attribute_name = is_array($attribute) ? $attribute[0]->name : $attribute->name;
-
-        $term_names = [];
-        foreach (array_unique($values) as $value) {
-            $split_values = array_map('trim', explode(',', $value));
-
-            foreach ($split_values as $val) {
-                if ($val === '') continue;
-
-                $term = get_attribute_term_by_name($woocommerce, $attribute_id, $val);
-                if (!$term) {
-                    $term = create_attribute_term($woocommerce, $attribute_id, $val);
-                }
-
-                $term_names[] = is_array($term) ? $term[0]->name : $term->name;
-            }
-        }
-
-        $attributes[] = [
-            'id' => $attribute_id,
-            'name' => $attribute_name,
-            'visible' => true,
-            'variation' => count($term_names) > 1,
-            'options' => array_unique($term_names)
+    if ($primary_cat_id) {
+        $product_data['meta_data'] = [
+            ['key' => '_primary_term_product_cat', 'value' => $primary_cat_id],
+            ['key' => 'rank_math_primary_product_cat', 'value' => $primary_cat_id],
         ];
     }
 
-    evalBool($_ENV['DEBUG']) && error_log("[DEBUG][POST] Attributes: " . json_encode($attributes, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-    return $attributes;
-}
-
-function build_variation_attributes_from_xml($variation_xml, $primary_category_name, $woocommerce) {
-    $variation_attributes = [];
-
-    if (!$variation_xml->Attributes) {
-        return $variation_attributes;
+    if ($brand_id) {
+        $product_data['brands'] = [ ['id' => $brand_id] ];
     }
 
-    $attributes_raw = [];
-
-    // STEP 1: Gather and map attributes with SortOrder
-    foreach ($variation_xml->Attributes->Attribute as $attr) {
-        $original_name = (string)$attr->Name;
-        $mapped_name = map_attribute_name($original_name, $primary_category_name);
-        $value = (string)$attr->Value;
-        $sort_order = isset($attr['SortOrder']) ? (int)$attr['SortOrder'] : 999;
-
-        $attributes_raw[] = [
-            'original_name' => $original_name,
-            'mapped_name' => $mapped_name,
-            'value' => $value,
-            'sort_order' => $sort_order
-        ];
+    if (!empty($all_attributes)) {
+        $product_data['attributes'] = $all_attributes;
     }
 
-    // STEP 2: Sort by SortOrder
-    usort($attributes_raw, function ($a, $b) {
-        return $a['sort_order'] <=> $b['sort_order'];
-    });
+    // Simple product
+    if ($type === 'simple' && isset($xml->ProductVariations->ProductVariation)) {
+        $variation = $xml->ProductVariations->ProductVariation;
+        $product_id = (string)$variation->ProductId;
+        $sku = $product_number . '_' . $product_id;
 
-    // STEP 3: Build variation_attributes
-    foreach ($attributes_raw as $attr) {
-        $attribute = get_attribute_by_name($woocommerce, $attr['mapped_name']);
-        if (!$attribute) {
-            $attribute = create_attribute($woocommerce, $attr['mapped_name']);
-        }
+        $product_data['regular_price'] = number_format((float)$variation->SalesPriceInc, 2, '.', '');
+		$action_data = get_active_action_price_data_from_xml($variation->ActionPrices);
 
-        $attribute_id = is_array($attribute) ? $attribute[0]->id : $attribute->id;
+		if ($action_data) {
+			$product_data['sale_price'] = $action_data['price'];
+			$product_data['date_on_sale_from'] = $action_data['from'];
+			$product_data['date_on_sale_to'] = $action_data['to'];
+		}
+        $product_data['sku'] = $sku;
+        $product_data['ProductId'] = $product_id;
+    }
 
-        $split_values = array_map('trim', explode(',', $attr['value']));
-        foreach ($split_values as $val) {
-            if ($val === '') continue;
+	 // Bundle product
+    if ($type === 'bundle' && isset($xml->ProductVariations->ProductVariation)) {
+        $variation = $xml->ProductVariations->ProductVariation;
+        $product_id = (string)$variation->ProductId;
+        $sku = $product_number . '_' . $product_id;
 
-            $term = get_attribute_term_by_name($woocommerce, $attribute_id, $val);
-            if (!$term) {
-                $term = create_attribute_term($woocommerce, $attribute_id, $val);
+        $product_data['regular_price'] = number_format((float)$variation->SalesPriceInc, 2, '.', '');
+		$action_data = get_active_action_price_data_from_xml($variation->ActionPrices);
+
+		if ($action_data) {
+			$product_data['sale_price'] = $action_data['price'];
+			$product_data['date_on_sale_from'] = $action_data['from'];
+			$product_data['date_on_sale_to'] = $action_data['to'];
+		}
+        $product_data['sku'] = $sku;
+        $product_data['ProductId'] = $product_id;
+
+		$bundled_items = [];
+        if (isset($xml->MandatoryProducts->MandatoryProduct)) {
+            $position = 0;
+            foreach ($xml->MandatoryProducts->MandatoryProduct as $mandatory) {
+                $child_guid = (string)$mandatory;
+                $child_product_id = (string)$mandatory['ProductId'];
+
+                // Zoek product in $GLOBALS['product_map'] (zoals bij variaties)
+               $linked = $product_map[$child_guid] ?? null;
+
+                if ($linked && isset($linked->id)) {
+                    $bundled_items[] = [
+                        'product_id' => $linked->id,
+                        'quantity_min' => 1,
+                        'quantity_max' => 1,
+                        'menu_order' => $position
+                    ];
+                    $position++;
+                }
             }
 
-            $term_name = is_array($term) ? $term[0]->name : $term->name;
+            // Check of bestaande bundel afwijkt
+            $existing_bundle = $existing->bundled_items ?? [];
+            $changed_bundle = count($bundled_items) !== count($existing_bundle);
 
-            $variation_attributes[] = [
-                'id' => $attribute_id,
-                'option' => $term_name
-            ];
+            if (!$changed_bundle) {
+                foreach ($bundled_items as $i => $new_item) {
+                    $old = $existing_bundle[$i] ?? null;
+                    if (!$old || $old->product_id != $new_item['product_id']) {
+                        $changed_bundle = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($changed_bundle) {
+                // Markeer als volledige bundelvervanging
+                $product_data['bundled_items'] = array_map(function ($item) {
+                    return array_merge($item, ['delete' => false]);
+                }, $bundled_items);
+
+                // Voeg verwijdermarkering toe voor oude bundelitems (alle)
+                foreach ($existing_bundle as $old) {
+                    $product_data['bundled_items'][] = ['id' => $old->id, 'delete' => true];
+                }
+            }
         }
     }
 
-    return $variation_attributes;
-}
+    // ❗ Check op update
+    if ($existing) {
+        $changed = false;
 
-function attributes_changed($current_attributes, $new_attributes) {
-    if (count($current_attributes) !== count($new_attributes)) {
-        return true;
+        // Vergelijking op een aantal hoofdvelden
+        if ($existing->name !== $product_data['name']) $changed = true;
+        if ($existing->description !== $product_data['description']) $changed = true;
+        if ($existing->short_description !== $product_data['short_description']) $changed = true;
+        if ($existing->featured !== $product_data['featured']) $changed = true;
+        if ($existing->status !== $product_data['status']) $changed = true;
+        if ($existing->type !== $product_data['type']) $changed = true;
+        if ($existing->sku !== $product_data['sku']) $changed = true;
+        if ($existing->rank_math_title !== $product_data['rank_math_title']) $changed = true;
+        if ($existing->rank_math_focus_keyword !== $product_data['rank_math_focus_keyword']) $changed = true;
+        if ($existing->rank_math_description !== $product_data['rank_math_description']) $changed = true;
+
+        if (images_changed($existing->images ?? [], $product_data['images'])) $changed = true;
+
+        if (!$changed) return null;
+
+        $product_data['id'] = $existing->id;
     }
 
-    foreach ($new_attributes as $new_attr) {
-        $matched = false;
+    return $product_data;
+}
 
-        foreach ($current_attributes as $curr_attr) {
-            // Match by attribute id or name
-            if (
-                (isset($new_attr['id']) && isset($curr_attr->id) && $new_attr['id'] == $curr_attr->id) ||
-                (isset($new_attr['name']) && isset($curr_attr->name) && strtolower($new_attr['name']) == strtolower($curr_attr->name))
-            ) {
-                $curr_options = array_map('strval', $curr_attr->options ?? []);
-                $new_options = array_map('strval', $new_attr['options']);
+function process_variations_from_xml_files($woocommerce, $xml_files, &$product_map, &$attribute_cache, &$term_cache, &$category_cache) {
+    foreach ($xml_files as $file_index => $file) {
+        log_message('INFO', "Verwerken van bestand {$file_index} → $file");
+        if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
 
-                sort($curr_options);
-                sort($new_options);
+        $xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
 
-                if ($curr_options !== $new_options) {
-                    return true;
+        foreach ($xml->Products->Product as $i => $product_xml) {
+            $guid = (string)$product_xml->EcommerceProductGuid;
+            //clean_deleted_variations($product_xml);
+            $variations = $product_xml->ProductVariations->ProductVariation ?? [];
+
+            // Alleen variabele producten verwerken
+            if (count($variations) <= 1) continue;
+
+            log_message('INFO', "[{$i}] Verwerken product {$guid}");
+            if (!isset($product_map[$guid]) || !isset($product_map[$guid]->id)) continue;
+
+            $product = $product_map[$guid];
+
+            // Primaire categorienaam ophalen
+            $primary_cat_name = '';
+            foreach ($product_xml->Groups->ProductGroup as $group) {
+                if (strtolower((string)$group['Default']) === 'true') {
+                    $group_guid = (string)$group;
+                    if (isset($category_cache[$group_guid])) {
+						$cat = $category_cache[$group_guid];
+                		
+                        $primary_cat_name = $cat->name ?? '';
+                        break;
+                    }
                 }
+            }
 
-                $matched = true;
+            $existing_variations = get_variations_by_product_guid_batch($woocommerce, $product->id);
+            $batch = build_variation_batch_payload($product->id, $product_xml, $existing_variations, $primary_cat_name, $attribute_cache, $term_cache);
+
+            flush_variation_batch($woocommerce, $product->id, $batch['create'], $batch['update'], $batch['delete']);
+        }
+    }
+}
+
+function build_variation_batch_payload($product_id, $product_xml, $existing_variations, $primary_cat_name, &$attribute_cache, &$term_cache) {
+    $create = [];
+    $update = [];
+    $delete = [];
+    $used_guids = [];
+
+    foreach ($product_xml->ProductVariations->ProductVariation as $var_xml) {
+        $guid = (string)$var_xml->EcommerceProductVariationGuid;
+
+        // Verwijderde variatie?
+        if (strtolower((string)$var_xml->IsDeleted) === 'true') {
+            if (isset($existing_variations[$guid])) {
+                $delete[] = ['id' => $existing_variations[$guid]->id];
+            }
+            continue;
+        }
+
+        $used_guids[] = $guid;
+        $product_number = (string)$product_xml->ProductNumber;
+        $product_id_vms = (string)$var_xml->ProductId;
+        $sku = $product_number . '_' . $product_id_vms;
+
+        $variation_data = [
+            'sku' => $sku,
+            'regular_price' => number_format((float)$var_xml->SalesPriceInc, 2, '.', ''),
+            'description' => (string)$var_xml->ProductDescription,
+            'EcommerceProductVariationGuid' => $guid,
+            'ProductId' => $product_id_vms,
+            'attributes' => build_variation_attributes_from_xml(
+                $var_xml,
+                $primary_cat_name,
+                $attribute_cache,
+                $term_cache,
+                $GLOBALS['batch_create_attributes'],
+                $GLOBALS['batch_create_terms']
+            ),
+        ];
+
+        $action_data = get_active_action_price_data_from_xml($var_xml->ActionPrices);
+        if ($action_data) {
+            $variation_data['sale_price'] = $action_data['price'];
+            $variation_data['date_on_sale_from'] = $action_data['from'];
+            $variation_data['date_on_sale_to'] = $action_data['to'];
+        }
+
+        if (isset($var_xml->Images->Image)) {
+            foreach ($var_xml->Images->Image as $img) {
+                $variation_data['image'] = get_images($img);
                 break;
             }
         }
 
-        if (!$matched) {
-            return true;
-        }
-    }
+        if (!isset($existing_variations[$guid])) {
+            $create[] = $variation_data;
+        } else {
+            $existing = $existing_variations[$guid];
+            $changed = false;
 
-    return false;
-}
-function variation_attributes_changed($current, $new) {
-    if (count($current) !== count($new)) return true;
+            if ($existing->sku !== $variation_data['sku']) $changed = true;
+            if ((string)$existing->regular_price !== $variation_data['regular_price']) $changed = true;
+            if ($existing->description !== $variation_data['description']) $changed = true;
+            if (variation_image_changed($existing->image ?? null, $variation_data['image'] ?? null)) $changed = true;
+            if (variation_attributes_changed($existing->attributes ?? [], $variation_data['attributes'])) $changed = true;
 
-    foreach ($new as $index => $new_attr) {
-        $curr_attr = $current[$index] ?? null;
-        if (!$curr_attr) return true;
-
-        $same_id = isset($new_attr['id'], $curr_attr->id) && $new_attr['id'] == $curr_attr->id;
-        $same_name = isset($new_attr['name'], $curr_attr->name) && strtolower($new_attr['name']) == strtolower($curr_attr->name);
-
-        $same_option = isset($new_attr['option'], $curr_attr->option) && $new_attr['option'] == $curr_attr->option;
-
-        if ((!$same_id && !$same_name) || !$same_option) {
-            return true;
-        }
-    }
-
-    return false;
-}
-function get_images($xml){
-	$params = [
-		'search' => $xml->__toString(),  // Search by filename
-		'per_page' => 1  // Limit the number of results
-	];
-	//var_dump($params);
-	$media = fetch_wordpress_data('media', $params);
-	//var_dump($media);
-	
-	if(!empty($media)){
-		$data = [
-			'id' => $media[0]['id'],
-			'position' => (int)$xml['ImageOrder']
-		];
-	} else {
-		$data = [
-			'src' => url_origin( $_SERVER ).'/import/images/'.$xml->__toString(),
-			'position' => (int)$xml['ImageOrder']
-		];
-	}
-	//var_dump($data);
-	return $data;
-}
-function get_combined_images_from_xml($xml) {
-    $images = [];
-
-    if (!isset($xml->ProductVariations->ProductVariation)) {
-        return $images;
-    }
-
-    foreach ($xml->ProductVariations->ProductVariation as $variation) {
-        if (isset($variation->Images->Image)) {
-            foreach ($variation->Images->Image as $img) {
-                $image_data = get_images($img); // your existing function
-                $images[] = $image_data;
+            if ($changed) {
+                $variation_data['id'] = $existing->id;
+                $update[] = $variation_data;
             }
         }
     }
 
-    // Deduplicate by src or id
-    $seen = [];
-    $unique_images = [];
-
-    foreach ($images as $image) {
-        $key = isset($image['id']) ? 'id:' . $image['id'] : 'src:' . $image['src'];
-
-        if (!in_array($key, $seen)) {
-            $seen[] = $key;
-            $unique_images[] = $image;
+    // Controle op variaties die niet meer in XML voorkomen
+    foreach ($existing_variations as $guid => $variation) {
+        if (!in_array($guid, $used_guids)) {
+            $delete[] = ['id' => $variation->id];
         }
     }
-
-    // Add position (optional but recommended)
-    foreach ($unique_images as $index => &$image) {
-        $image['position'] = $index;
-    }
-
-    return $unique_images;
-}
-function images_changed($current_images, $new_images) {
-    if (count($current_images) !== count($new_images)) {
-        return true;
-    }
-
-    foreach ($new_images as $index => $new_image) {
-        $current = $current_images[$index] ?? null;
-        if (!$current) return true;
-
-        $current_src = $current->src ?? null;
-        $current_id  = $current->id ?? null;
-        $new_src     = $new_image['src'] ?? null;
-        $new_id      = $new_image['id'] ?? null;
-
-        if (
-            ($new_id && $current_id && $new_id != $current_id) ||
-            ($new_src && $current_src && $new_src != $current_src)
-        ) {
-            return true;
-        }
-    }
-
-    return false;
-}
-function variation_image_changed($current_image, $new_image) {
-    if (!$current_image && !$new_image) return false;
-    if (!$current_image || !$new_image) return true;
-
-    $current_id  = $current_image->id ?? null;
-    $current_src = $current_image->src ?? null;
-
-    $new_id  = $new_image['id'] ?? null;
-    $new_src = $new_image['src'] ?? null;
-
-    return (
-        ($new_id && $current_id && $new_id !== $current_id) ||
-        ($new_src && $current_src && $new_src !== $current_src)
-    );
-}
-
-function get_linked_product_ids_from_xml($xml, $woocommerce) {
-    $upsells = [];
-    $cross_sells = [];
-
-    // Upsells from <SimilarProducts>
-    if (isset($xml->SimilarProducts->SimilarProduct)) {
-        foreach ($xml->SimilarProducts->SimilarProduct as $similar) {
-            $product = get_product_by_guid($woocommerce, $similar->__toString());
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] UpSell: " . json_encode($product, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-            if ($product) $upsells[] = $product[0]->id;
-        }
-    }
-
-    // Cross-sells from <Parts>
-    if (isset($xml->Parts->PartProduct)) {
-        foreach ($xml->Parts->PartProduct as $part) {
-            $product = get_product_by_guid($woocommerce, $part->__toString());
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell: " . json_encode($product, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-            if ($product) $cross_sells[] = $product[0]->id;
-        }
-    }
-
-    // Cross-sells from <Accessories>
-    if (isset($xml->Accessories->AccessoryProduct)) {
-        foreach ($xml->Accessories->AccessoryProduct as $accessory) {
-            $product = get_product_by_guid($woocommerce, $accessory->__toString());
-			evalBool($_ENV['DEBUG']) && error_log("[DEBUG][GET] CrossSell2: " . json_encode($product, JSON_PRETTY_PRINT), 3 , IMPORT_ERROR_LOG);
-            if ($product) $cross_sells[] = $product[0]->id;
-        }
-    }
-
-    // Deduplicate
-    $upsells = array_values(array_unique($upsells));
-    $cross_sells = array_values(array_unique($cross_sells));
 
     return [
-        'upsell_ids' => implode(',', $upsells),
-        'cross_sell_ids' => implode(',', $cross_sells)
+        'product_id' => $product_id,
+        'create' => $create,
+        'update' => $update,
+        'delete' => $delete
     ];
 }
-?>
-</pre>
+
+
+log_message('INFO', '=== END OF IMPORT_PRODUCTS.PHP ===');
