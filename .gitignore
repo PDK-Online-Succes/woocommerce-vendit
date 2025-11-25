@@ -6,3 +6,6 @@ import/*
 export/*
 .vscode/*
 tmp/*
+
+test.php
+old_import_products.php
