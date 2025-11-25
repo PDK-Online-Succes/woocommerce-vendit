@@ -111,6 +111,7 @@ function process_category_batches($woocommerce, $groups, &$cached_guids, $attrib
         foreach ($updates as $item) {
             try {
 				//error_log(date('Y-m-d H:i:s') . "[DEBUG][PUT] filter_kenmerk payload: " . print_r($data['filter_kenmerk'], true)."\r\n", 3, IMPORT_ERROR_LOG);
+				//log_message('DEBUG,PUT',"Categorie Payload:". json_encode($item,JSON_PRETTY_PRINT));
                 $woocommerce->put("products/categories/{$item['id']}", $item['data']);
                 $updated++;
             } catch (Exception $e) {

@@ -1,13 +1,38 @@
 <?php
 require_once __DIR__ . '/init.php';
-log_message('INFO', '=== START OF IMPORT_PRODUCTS.PHP ===');
 
-$files = recursive_scan_dir('tmp/products');
-$options = getopt("a", ["action:"]);
+// CLI opties
+$options = getopt("a:o", ["action:", "options:"]);
+
+$only_variations = false;
+$only_products = false;
+
+// Bepaal map
 if ((isset($options['a']) && $options['a'] === 'manual') || (isset($options['action']) && $options['action'] === 'manual')) {
-    $manual = true;
-    $files = recursive_scan_dir('manual/products');
+    $dir = 'manual/products';
+} else {
+    $dir = 'tmp/products';
 }
+
+// Bestanden ophalen
+$files = recursive_scan_dir($dir);
+
+// Opties instellen
+if ((isset($options['o']) && $options['o'] === 'only_variations') || (isset($options['options']) && $options['options'] === 'only_variations')) {
+    $only_variations = true;
+}
+
+if ((isset($options['o']) && $options['o'] === 'only_products') || (isset($options['options']) && $options['options'] === 'only_products')) {
+    $only_products = true;
+}
+
+// --- Nieuwe functie: XML-bestanden splitsen indien nodig ---
+split_large_xml_files($files, $dir, 500);
+
+// Na splitsen bestanden opnieuw ophalen
+$files = recursive_scan_dir($dir);
+
+log_message('INFO', json_encode($files, JSON_PRETTY_PRINT));
 
 $total = $create = $update = $delete = 0;
 
@@ -20,98 +45,211 @@ $total_variations_created = 0;
 $total_variations_updated = 0;
 $total_variations_deleted = 0;
 
+/**
+ * PRE-SCAN FASE
+ * ========================
+ * 1. Bestaande caches ophalen
+ * 2. XML scannen om nieuwe brands / attributes / terms te detecteren
+ * 3. Batches aanmaken
+ * 4. Caches opnieuw opbouwen
+ */
+
+log_message('INFO', 'Starting prescan for brands/attributes/terms');
+
+// 1) Caches ophalen
 $brand_cache = build_brand_cache($woocommerce);
 $attribute_cache = build_attribute_cache($woocommerce);
 $term_cache = build_term_cache($woocommerce, $attribute_cache);
 $category_cache = build_category_cache($woocommerce);
 
-// Verzamel alle GUIDs
-$product_guids = [];
+// 2) Pre-scan XML voor de queues (alleen brands/attributes/terms verzamelen)
 foreach ($files as $file) {
     if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
+
     $xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
-    foreach ($xml->Products->Product as $item) {
-        $product_guids[] = (string)$item->EcommerceProductGuid;
-    }
-}
-//error_log("Unique GUIDs to fetch: " . json_encode(array_unique($product_guids))."\r\n", 3, IMPORT_ERROR_LOG);
-//log_message('INFO', "Unique GUIDs to fetch: " . json_encode(array_unique($product_guids)));
 
-global $product_map;
-$product_map = get_products_by_guids_batch($woocommerce, array_unique($product_guids));
+    foreach ($xml->Products->Product as $product_xml) {
 
-log_message('INFO', '=== START PRODUCTIMPORT ===');
+        // Merk detecteren
+        get_brand_cached((string)$product_xml->Brand, $brand_cache, $GLOBALS['batch_create_brands']);
 
-process_products_from_xml($woocommerce, $files, $product_map, $attribute_cache, $term_cache, $brand_cache, $category_cache);
+        // Specs
+        if (isset($product_xml->Specs->Spec)) {
+            foreach ($product_xml->Specs->Spec as $spec) {
+                $raw_name = (string)$spec->Name;
+                $value = (string)$spec->Value;
 
-process_variations_from_xml_files($woocommerce, $files, $product_map, $attribute_cache, $term_cache, $category_cache);
+                if (trim($raw_name) === '' || trim($value) === '') continue;
 
-log_message('INFO', '=== SAMENVATTING PRODUCTIMPORT ===');
-log_message('INFO', "Totaal producten gevonden:      $total_products");
-log_message('INFO', "Producten aangemaakt:           $total_created");
-log_message('INFO', "Producten bijgewerkt:           $total_updated");
-log_message('INFO', "Producten verwijderd:           $total_deleted");
-log_message('INFO', "Variaties aangemaakt:           $total_variations_created");
-log_message('INFO', "Variaties bijgewerkt:           $total_variations_updated");
-log_message('INFO', "Variaties verwijderd:           $total_variations_deleted");
-log_message('INFO', '=== EINDE PRODUCTIMPORT ===');
+                // Mapping + attribute ophalen
+                $mapped_name = map_attribute_name($raw_name, '');
+                $attr_obj = get_or_create_attribute_cached($mapped_name, $attribute_cache, $GLOBALS['batch_create_attributes']);
 
-function process_products_from_xml($woocommerce, $xml_files, $product_map, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache) {
-    $create = [];
-    $update = [];
-    $delete = [];
+                if ($attr_obj) {
+                    foreach (explode(',', $value) as $val) {
+                        $val = trim($val);
+                        if ($val === '') continue;
 
-    foreach ($xml_files as $file) {
-        if (!file_exists(__DIR__ . '/' . $file)) continue;
-
-        $xml = simplexml_load_file(__DIR__ . '/' . $file);
-
-        foreach ($xml->Products->Product as $product_xml) {
-            $guid = (string)$product_xml->EcommerceProductGuid;
-            clean_deleted_variations($product_xml);
-
-            // Verwijderen
-            if (strtolower((string)$product_xml->IsDeleted) === 'true') {
-                if (isset($product_map[$guid])) {
-                    $delete[] = ['id' => $product_map[$guid]->id];
+                        get_or_create_term_cached($attr_obj->id, $val, $term_cache, $GLOBALS['batch_create_terms']);
+                    }
                 }
-                continue;
             }
+        }
 
-            // Type bepalen (simple, variable, bundled)
-            $variations = $product_xml->ProductVariations->ProductVariation ?? [];
-            $bundle     = $product_xml->MandatoryProducts->MandatoryProduct ?? [];
+        // Variatie-attributen
+        if (isset($product_xml->ProductVariations->ProductVariation)) {
+            foreach ($product_xml->ProductVariations->ProductVariation as $variation) {
+                if (!isset($variation->Attributes->Attribute)) continue;
 
-            if (count($variations) === 1 && count($bundle) === 0) {
-                $type = 'simple';
-            } elseif (count($variations) === 1 && count($bundle) > 0) {
-                $type = 'bundle';
-            } else {
-                $type = 'variable';
-            }
+                foreach ($variation->Attributes->Attribute as $attr) {
+                    $raw_name = (string)$attr->Name;
+                    $value = (string)$attr->Value;
 
-            // ➕ Nieuw product
-            if (!isset($product_map[$guid])) {
-				//log_message('CREATE', "GUID:  {$guid}" );
-                $create[] = build_product_payload($product_xml, $type, null, $attribute_cache, $term_cache, $brand_cache, $category_cache, $product_map);
-            } else {
-				//log_message('UPDATE', "GUID:  {$guid}" );
-                // ✏️ Bestaand product: update indien nodig
-                $existing = $product_map[$guid];
-                $new_data = build_product_payload($product_xml, $type, $existing, $attribute_cache, $term_cache, $brand_cache, $category_cache, $product_map);
-                if ($new_data !== null) {
+                    if (trim($raw_name) === '' || trim($value) === '') continue;
 
-                    $update[] = $new_data;
+                    $mapped_name = map_attribute_name($raw_name, '');
+                    $attr_obj = get_or_create_attribute_cached($mapped_name, $attribute_cache, $GLOBALS['batch_create_attributes']);
+
+                    if ($attr_obj) {
+                        get_or_create_term_cached($attr_obj->id, trim($value), $term_cache, $GLOBALS['batch_create_terms']);
+                    }
                 }
             }
         }
     }
+}
+
+// 3) Batches uitvoeren om nieuwe items in WooCommerce aan te maken
+log_message('DEBUG', 'Brand: '. json_encode($GLOBALS['batch_create_brands'],JSON_PRETTY_PRINT));
+flush_create_brands($woocommerce, $GLOBALS['batch_create_brands']);
+$GLOBALS['batch_create_brands'] = [];
+
+log_message('DEBUG', 'Attributes: '. json_encode($GLOBALS['batch_create_attributes'],JSON_PRETTY_PRINT));
+flush_create_attributes($woocommerce, $GLOBALS['batch_create_attributes']);
+$GLOBALS['batch_create_attributes'] = [];
+
+log_message('DEBUG', 'Terms: '. json_encode($GLOBALS['batch_create_terms'],JSON_PRETTY_PRINT));
+flush_create_terms($woocommerce, $GLOBALS['batch_create_terms']);
+$GLOBALS['batch_create_terms'] = [];
+
+gc_collect_cycles();
+
+// 4) Caches opnieuw opbouwen met net aangemaakte items
+$brand_cache = build_brand_cache($woocommerce);
+$attribute_cache = build_attribute_cache($woocommerce);
+$term_cache = build_term_cache($woocommerce, $attribute_cache);
+
+log_message('INFO', 'Prescan complete, starting product import…');
+
+global $product_map;
+
+foreach ($files as $file_index => $file) {
+	$total_products = $total_created = $total_updated = $total_deleted = $total_variations_created = $total_variations_updated = $total_variations_deleted = 0;
+
+	log_message('INFO', '=== START PRODUCTIMPORT ===');
+	log_message('INFO', "Verwerken van bestand {$file_index} → $file");
+	if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
+	
+	$xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
+
+	// Verzamel alle GUIDs per bestand.
+	$product_guids = [];
+	foreach ($xml->Products->Product as $item) {
+        $product_guids[] = (string)$item->EcommerceProductGuid;
+    }
+	$product_map = get_products_by_guids_batch($woocommerce, array_unique($product_guids));
+	
+	if( !$only_variations ){
+		// Process alle producten
+		process_products_from_xml($woocommerce, $xml, $product_map, $attribute_cache, $term_cache, $brand_cache, $category_cache);	
+	}
+
+	if( !$only_products ){
+		// Process alle variaties
+		process_variations_from_xml_files($woocommerce, $xml, $product_map, $attribute_cache, $term_cache, $category_cache);
+	}
+	
+	log_message('INFO', '=== SAMENVATTING PRODUCTIMPORT ===');
+	log_message('INFO', "Totaal producten gevonden:      $total_products");
+	if( !$only_variations  ){
+		log_message('INFO', "Producten aangemaakt:           $total_created");
+		log_message('INFO', "Producten bijgewerkt:           $total_updated");
+		log_message('INFO', "Producten verwijderd:           $total_deleted");
+	} else {
+		log_message('INFO', "Verwerk alleen de variaties.");
+	}
+	if( !$only_products ) {
+		log_message('INFO', "Variaties aangemaakt:           $total_variations_created");
+		log_message('INFO', "Variaties bijgewerkt:           $total_variations_updated");
+		log_message('INFO', "Variaties verwijderd:           $total_variations_deleted");
+	} else {
+		log_message('INFO', "Verwerk alleen de producten.");
+	}
+	
+	log_message('INFO', '=== EINDE PRODUCTIMPORT ===');
+
+	unlink(__DIR__ . DIRECTORY_SEPARATOR . $file);
+	
+	unset($xml);
+	gc_collect_cycles();
+}
+
+
+function process_products_from_xml($woocommerce, $xml, $product_map, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache) {
+    $create = [];
+    $update = [];
+    $delete = [];
+
+	foreach ($xml->Products->Product as $product_xml) {
+		$guid = (string)$product_xml->EcommerceProductGuid;
+		clean_deleted_variations($product_xml);
+
+		// Verwijderen
+		if (strtolower((string)$product_xml->IsDeleted) === 'true') {
+			if (isset($product_map[$guid])) {
+				$delete[] = ['id' => $product_map[$guid]->id];
+			}
+			continue;
+		}
+
+		// Type bepalen (simple, variable, bundled)
+		$variations = $product_xml->ProductVariations->ProductVariation ?? [];
+		$bundle     = $product_xml->MandatoryProducts->MandatoryProduct ?? [];
+
+		if (count($variations) === 1 && count($bundle) === 0) {
+			$type = 'simple';
+		} elseif (count($variations) === 1 && count($bundle) > 0) {
+			$type = 'bundle';
+		} else {
+			$type = 'variable';
+		}
+
+		// ➕ Nieuw product
+		if (!isset($product_map[$guid])) {
+			//log_message('CREATE', "GUID:  {$guid}" );
+			$create[] = build_product_payload($product_xml, $type, $product_map, $attribute_cache, $term_cache, $brand_cache, $category_cache, null);
+		} else {
+			//log_message('UPDATE', "GUID:  {$guid}" );
+			// ✏️ Bestaand product: update indien nodig
+			$existing = $product_map[$guid];
+			$new_data = build_product_payload($product_xml, $type, $product_map, $attribute_cache, $term_cache, $brand_cache, $category_cache, $existing);
+			if ($new_data !== null) {
+
+				$update[] = $new_data;
+			}
+		}
+	}
 
     // Laatste batch
     flush_product_batches($woocommerce, $product_map, $create, $update, $delete);
+	
+	unset($create, $update, $delete, $product_map);
+	gc_collect_cycles();
+	
+	return true;
 }
 
-function build_product_payload($xml, $type, $existing = null, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache, &$product_map) {
+function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache, $existing = null) {
     $guid = (string)$xml->EcommerceProductGuid;
     $product_number = (string)$xml->ProductNumber;
     $name = (string)$xml->Description;
@@ -125,6 +263,7 @@ function build_product_payload($xml, $type, $existing = null, &$attribute_cache,
 	$rankmath_description = (string)$xml->MetaDescription;
 
     $images = get_combined_images_from_xml($xml);
+	//log_message('DEBUG', json_encode($images, JSON_PRETTY_PRINT));
 
     $categories = [];
     $primary_cat_id = null;
@@ -149,9 +288,12 @@ function build_product_payload($xml, $type, $existing = null, &$attribute_cache,
             }
         }
     }
-
+	//log_message('DEBUG', 'XML BRAND: '.$brand_name);
+	//log_message('DEBUG', 'BRAND CACHE: '.json_encode($brand_cache,JSON_PRETTY_PRINT));
     $brand = get_brand_cached($brand_name, $brand_cache, $GLOBALS['batch_create_brands']);
-    $brand_id = $brand->id ?? null;
+    //$brand_id = $brand->id ?? null;
+    $brand_id = $brand?->id;
+	//log_message('DEBUG', 'BRAND CACHED: '.json_encode($brand,JSON_PRETTY_PRINT));
 
     $attr_data = extract_attributes_from_spec_and_variation(
         $xml,
@@ -212,6 +354,19 @@ function build_product_payload($xml, $type, $existing = null, &$attribute_cache,
 			$product_data['date_on_sale_from'] = $action_data['from'];
 			$product_data['date_on_sale_to'] = $action_data['to'];
 		}
+		// Als er géén actie is, maar existing had wél een sale, dan sale velden leeg maken
+		if (!$action_data && $existing) {
+			$hadSale = !empty($existing->sale_price) 
+				|| !empty($existing->date_on_sale_from) 
+				|| !empty($existing->date_on_sale_to);
+
+			if ($hadSale) {
+				$product_data['sale_price'] = '';
+				$product_data['date_on_sale_from'] = null;
+				$product_data['date_on_sale_to'] = null;
+			}
+		}
+
         $product_data['sku'] = $sku;
         $product_data['ProductId'] = $product_id;
     }
@@ -230,6 +385,19 @@ function build_product_payload($xml, $type, $existing = null, &$attribute_cache,
 			$product_data['date_on_sale_from'] = $action_data['from'];
 			$product_data['date_on_sale_to'] = $action_data['to'];
 		}
+		// Als er géén actie is, maar existing had wél een sale, dan sale velden leeg maken
+		if (!$action_data && $existing) {
+			$hadSale = !empty($existing->sale_price) 
+				|| !empty($existing->date_on_sale_from) 
+				|| !empty($existing->date_on_sale_to);
+
+			if ($hadSale) {
+				$product_data['sale_price'] = '';
+				$product_data['date_on_sale_from'] = null;
+				$product_data['date_on_sale_to'] = null;
+			}
+		}
+
         $product_data['sku'] = $sku;
         $product_data['ProductId'] = $product_id;
 
@@ -269,22 +437,30 @@ function build_product_payload($xml, $type, $existing = null, &$attribute_cache,
             }
 
             if ($changed_bundle) {
-                // Markeer als volledige bundelvervanging
-                $product_data['bundled_items'] = array_map(function ($item) {
-                    return array_merge($item, ['delete' => false]);
-                }, $bundled_items);
+				// Nieuwe items klaarzetten
+				$product_data['bundled_items_add'] = array_map(function ($item) {
+					return array_merge($item, ['delete' => false]);
+				}, $bundled_items);
 
-                // Voeg verwijdermarkering toe voor oude bundelitems (alle)
-                foreach ($existing_bundle as $old) {
-                    $product_data['bundled_items'][] = ['id' => $old->id, 'delete' => true];
-                }
-            }
+				// Oude items apart markeren
+				$product_data['bundled_items_delete'] = [];
+				foreach ($existing_bundle as $old) {
+					if (!empty($old->bundled_item_id)) {
+						$product_data['bundled_items_delete'][] = [
+							'bundled_item_id' => $old->bundled_item_id,
+							'delete'          => true
+						];
+					}
+				}
+			}
         }
     }
 
     // ❗ Check op update
     if ($existing) {
         $changed = false;
+
+		if ($changed_bundle) $changed = true;
 
         // Vergelijking op een aantal hoofdvelden
         if ($existing->name !== $product_data['name']) $changed = true;
@@ -298,22 +474,57 @@ function build_product_payload($xml, $type, $existing = null, &$attribute_cache,
         if ($existing->rank_math_focus_keyword !== $product_data['rank_math_focus_keyword']) $changed = true;
         if ($existing->rank_math_description !== $product_data['rank_math_description']) $changed = true;
 
-        if (images_changed($existing->images ?? [], $product_data['images'])) $changed = true;
+        //if (images_changed($existing->images ?? [], $product_data['images'])) $changed = true;
+
+		if (images_changed($existing->images ?? [], $product_data['images'])) {
+			// Verwijder oude media
+			foreach ($existing->images as $img) {
+				if (isset($img->id)) {
+					delete_media_item($img->id);
+				}
+			}
+			$changed = true;
+			// Vervang door nieuwe afbeeldingen (zitten al in $product_data['images'])
+		}
+
+		// ➕ Prijsvelden meenemen in vergelijking (belangrijk voor simple/bundle)
+		if (isset($product_data['regular_price'])) {
+			if ((string)($existing->regular_price ?? '') !== (string)$product_data['regular_price']) {
+				$changed = true;
+			}
+		}
+
+		$new_sale      = $product_data['sale_price'] ?? '';
+		$old_sale      = $existing->sale_price ?? '';
+		$new_sale_from = $product_data['date_on_sale_from'] ?? '';
+		$old_sale_from = $existing->date_on_sale_from ?? '';
+		$new_sale_to   = $product_data['date_on_sale_to'] ?? '';
+		$old_sale_to   = $existing->date_on_sale_to ?? '';
+
+		if ((string)$old_sale !== (string)$new_sale) $changed = true;
+		if ((string)$old_sale_from !== (string)$new_sale_from) $changed = true;
+		if ((string)$old_sale_to !== (string)$new_sale_to) $changed = true;
 
         if (!$changed) return null;
 
         $product_data['id'] = $existing->id;
-    }
+    } else {
+		$product_data['manage_stock'] = true;
+		$product_data['stock_quantity'] = 0;
+		$product_data['stock_status'] = 'outofstock';
+		$product_data['backorders'] = 'no';
+	}
 
     return $product_data;
 }
 
-function process_variations_from_xml_files($woocommerce, $xml_files, &$product_map, &$attribute_cache, &$term_cache, &$category_cache) {
-    foreach ($xml_files as $file_index => $file) {
-        log_message('INFO', "Verwerken van bestand {$file_index} → $file");
-        if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
+function process_variations_from_xml_files($woocommerce, $xml, &$product_map, &$attribute_cache, &$term_cache, &$category_cache) {
 
-        $xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
+    // foreach ($xml_files as $file_index => $file) {
+    //     log_message('INFO', "Verwerken van bestand {$file_index} → $file");
+    //     if (!file_exists(__DIR__ . DIRECTORY_SEPARATOR . $file)) continue;
+
+        //$xml = simplexml_load_file(__DIR__ . DIRECTORY_SEPARATOR . $file);
 
         foreach ($xml->Products->Product as $i => $product_xml) {
             $guid = (string)$product_xml->EcommerceProductGuid;
@@ -347,7 +558,7 @@ function process_variations_from_xml_files($woocommerce, $xml_files, &$product_m
 
             flush_variation_batch($woocommerce, $product->id, $batch['create'], $batch['update'], $batch['delete']);
         }
-    }
+    //}
 }
 
 function build_variation_batch_payload($product_id, $product_xml, $existing_variations, $primary_cat_name, &$attribute_cache, &$term_cache) {
@@ -403,6 +614,11 @@ function build_variation_batch_payload($product_id, $product_xml, $existing_vari
         }
 
         if (!isset($existing_variations[$guid])) {
+			$variation_data['manage_stock'] = true;
+			$variation_data['stock_quantity'] = 0;
+			$variation_data['stock_status'] = 'outofstock';
+			$variation_data['backorders'] = 'no';
+
             $create[] = $variation_data;
         } else {
             $existing = $existing_variations[$guid];
@@ -411,8 +627,35 @@ function build_variation_batch_payload($product_id, $product_xml, $existing_vari
             if ($existing->sku !== $variation_data['sku']) $changed = true;
             if ((string)$existing->regular_price !== $variation_data['regular_price']) $changed = true;
             if ($existing->description !== $variation_data['description']) $changed = true;
-            if (variation_image_changed($existing->image ?? null, $variation_data['image'] ?? null)) $changed = true;
+
+			if (!$action_data) {
+				// Als er geen actie is, maar de bestaande variatie had wel een sale, leeg dan de sale velden
+				$hadSale = !empty($existing->sale_price) 
+					|| !empty($existing->date_on_sale_from) 
+					|| !empty($existing->date_on_sale_to);
+
+				if ($hadSale) {
+					$variation_data['sale_price'] = '';
+					$variation_data['date_on_sale_from'] = null;
+					$variation_data['date_on_sale_to'] = null;
+				}
+			}
+            
+			if (variation_image_changed($existing->image ?? null, $variation_data['image'] ?? null)) $changed = true;
+
             if (variation_attributes_changed($existing->attributes ?? [], $variation_data['attributes'])) $changed = true;
+
+			// ➕ Neem sale-velden mee in vergelijking
+			$new_sale      = $variation_data['sale_price'] ?? '';
+			$old_sale      = $existing->sale_price ?? '';
+			$new_sale_from = $variation_data['date_on_sale_from'] ?? '';
+			$old_sale_from = $existing->date_on_sale_from ?? '';
+			$new_sale_to   = $variation_data['date_on_sale_to'] ?? '';
+			$old_sale_to   = $existing->date_on_sale_to ?? '';
+
+			if ((string)$old_sale !== (string)$new_sale) $changed = true;
+			if ((string)$old_sale_from !== (string)$new_sale_from) $changed = true;
+			if ((string)$old_sale_to !== (string)$new_sale_to) $changed = true;
 
             if ($changed) {
                 $variation_data['id'] = $existing->id;
@@ -435,6 +678,3 @@ function build_variation_batch_payload($product_id, $product_xml, $existing_vari
         'delete' => $delete
     ];
 }
-
-
-log_message('INFO', '=== END OF IMPORT_PRODUCTS.PHP ===');

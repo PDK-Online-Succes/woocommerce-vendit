@@ -120,38 +120,91 @@ function get_categories_by_group_guids($woocommerce, $guids = []) {
 }
 
 // Multi-functional fetch function
-function fetch_wordpress_data($endpoint, $params = []) {
-    // Base URL for the WordPress REST API
-    $api_url = rtrim($_ENV['SiteURL'], '/') . '/wp-json/wp/v2/' . $endpoint;
-    // Initialize cURL
-    $ch = curl_init();
-    // Set up the full URL with query parameters
-    $url = $api_url . '?' . http_build_query($params);
-    curl_setopt($ch, CURLOPT_URL, $url);
-    // Use Basic Authentication with consumer key and secret
+function wp_rest_request($method, $endpoint, $params = [], $body = null) {
+    $base_url = rtrim($_ENV['SiteURL'], '/') . '/wp-json/' . ltrim($endpoint, '/');
+
+    if (in_array(strtoupper($method), ['GET', 'DELETE']) && !empty($params)) {
+        $base_url .= '?' . http_build_query($params);
+    }
+
+    $ch = curl_init($base_url);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, strtoupper($method));
     curl_setopt($ch, CURLOPT_USERPWD, $_ENV['wp_user'] . ':' . $_ENV['wp_secret']);
-    // Return response as a string
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    // Execute the request
+
+    if (in_array(strtoupper($method), ['POST', 'PUT']) && !empty($body)) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json'
+        ]);
+    }
+
     $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE); // Get the HTTP response code
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    // Check if the response is valid and the status code is 2xx (successful)
+    $data = json_decode($response, true);
+
     if ($http_code >= 200 && $http_code < 300) {
-        // Decode the JSON response
-        $data = json_decode($response, true);
-        
-        // Return the data if available
         return $data;
     } else {
-        // Handle errors (non-2xx response code)
+        log_message(['ERROR', strtoupper($method)], "Request to {$base_url} failed (HTTP {$http_code}): " . json_encode($data));
         return [
             'error' => true,
-            'message' => 'Request failed with HTTP code ' . $http_code,
-            'response' => $response
+            'http_code' => $http_code,
+            'message' => $data['message'] ?? 'Unknown error',
         ];
     }
+}
+
+function fetch_wordpress_data($endpoint, $params = []) {
+    return wp_rest_request('GET', "wp/v2/{$endpoint}", $params);
+}
+/* TODO: Remove */
+// function fetch_wordpress_data($endpoint, $params = []) {
+//     // Base URL for the WordPress REST API
+//     $api_url = rtrim($_ENV['SiteURL'], '/') . '/wp-json/wp/v2/' . $endpoint;
+//     // Initialize cURL
+//     $ch = curl_init();
+//     // Set up the full URL with query parameters
+//     $url = $api_url . '?' . http_build_query($params);
+//     curl_setopt($ch, CURLOPT_URL, $url);
+//     // Use Basic Authentication with consumer key and secret
+//     curl_setopt($ch, CURLOPT_USERPWD, $_ENV['wp_user'] . ':' . $_ENV['wp_secret']);
+//     // Return response as a string
+//     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+//     // Execute the request
+//     $response = curl_exec($ch);
+//     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE); // Get the HTTP response code
+//     curl_close($ch);
+
+//     // Check if the response is valid and the status code is 2xx (successful)
+//     if ($http_code >= 200 && $http_code < 300) {
+//         // Decode the JSON response
+//         $data = json_decode($response, true);
+        
+//         // Return the data if available
+//         return $data;
+//     } else {
+//         // Handle errors (non-2xx response code)
+//         return [
+//             'error' => true,
+//             'message' => 'Request failed with HTTP code ' . $http_code,
+//             'response' => $response
+//         ];
+//     }
+// }
+
+function delete_media_item($media_id) {
+    $result = wp_rest_request('DELETE', "wp/v2/media/{$media_id}", ['force' => true]);
+
+    if (isset($result['error']) && $result['error']) {
+        log_message(['ERROR', 'DELETE'], "Failed to delete media item {$media_id}: " . $result['message']);
+        return false;
+    }
+
+    log_message(['INFO', 'DELETE'], "Media item {$media_id} deleted.");
+    return true;
 }
 
 function url_origin($s = [], $use_forwarded_host = false) {
@@ -228,7 +281,7 @@ function build_brand_cache($woocommerce) {
                 'page' => $page
             ]);
             foreach ($response as $brand) {
-                $cache[strtolower($brand->name)] = $brand;
+                $cache[trim(strtolower($brand->name))] = $brand;
             }
             $count = count($response);
             $page++;
@@ -314,8 +367,8 @@ function build_category_cache($woocommerce) {
 
 // Queue helpers
 function queue_create_brand($name, &$queue) {
-    $slug = sanitize_slug($name);
-    $queue[$slug] = ['name' => $name, 'slug' => $slug];
+    $slug = sanitize_slug(trim($name));
+    $queue[$slug] = ['name' => trim($name), 'slug' => $slug];
 }
 
 function queue_create_attribute($name, &$queue) {
@@ -379,11 +432,10 @@ function flush_create_terms($woocommerce, &$queue) {
     $queue = [];
 }
 
-// Herschreven helpers
 function get_brand_cached($brand_name, &$brand_cache, &$batch_create_brands) {
-    $key = strtolower($brand_name);
+    $key = strtolower(htmlspecialchars(trim($brand_name)));
     if (isset($brand_cache[$key])) return $brand_cache[$key];
-    queue_create_brand($brand_name, $batch_create_brands);
+    queue_create_brand(trim($brand_name), $batch_create_brands);
     return null;
 }
 
@@ -412,6 +464,7 @@ function map_attribute_name($original_name, $primary_category_name) {
 			'luchtbuks' => 'Joule',
 			'luchtbuks / geweer' => 'Joule',
 			'luchtdrukpistool' => 'Joule',
+			'luchtdrukpistool-kopen' => 'Joule',
 			'luchtdrukmunitie' => 'Joule',
 			'pcp buks' => 'Joule',
 			'veer buks' => 'Joule',
@@ -431,6 +484,7 @@ function map_attribute_name($original_name, $primary_category_name) {
 			'luchtbuks' => 'Kaliber',
 			'luchtbuks / geweer' => 'Kaliber',
 			'luchtdrukpistool' => 'Kaliber',
+			'luchtdrukpistool-kopen' => 'Kaliber',
 			'luchtdrukmunitie' => 'Kaliber',
 			'pcp buks' => 'Kaliber',
 			'veer buks' => 'Kaliber',
@@ -480,8 +534,7 @@ function map_attribute_name($original_name, $primary_category_name) {
 
 function get_images($xml) {
     $filename = $xml->__toString();
-    $local_path = __DIR__ . '/import/images/' . $filename;
-
+    $local_path = dirname(__DIR__) . '/import/images/' . $filename;
     // Probeer eerst media match
     $params = [
         'search' => $filename,
@@ -801,9 +854,12 @@ function extract_attributes_from_spec_and_variation($xml, $type, $primary_cat_na
         }
     }
 
-    return [
+	 return [
         'attributes' => $attributes,
-        'variation_attributes' => array_values($variation_attributes_map)
+        'variation_attributes' => array_values(array_filter(
+			$variation_attributes_map,
+			fn($attr) => count($attr['options']) > 1
+		))
     ];
 }
 
@@ -851,37 +907,95 @@ function flush_product_batches($woocommerce, &$product_map, &$create, &$update, 
     foreach ($batch_types as $type => $items) {
         if (empty($items)) continue;
 
-        $chunks = array_chunk($items, 100);
+        // 🔴 Stap 1: afbeeldingen verwijderen vóór batch delete
+        if ($type === 'delete') {
+            foreach ($items as $item) {
+                $product_id = $item['id'];
+                try {
+                    $product = $woocommerce->get("products/{$product_id}");
+
+                    if (!empty($product->images)) {
+                        foreach ($product->images as $img) {
+                            if (isset($img->id)) {
+                                delete_media_item($img->id);
+                            }
+                        }
+                    }
+                } catch (Exception $e) {
+                    log_message(['ERROR', 'GET'], "Failed to fetch product {$product_id} for image cleanup: " . $e->getMessage());
+                }
+            }
+        }
+
+        $chunks = array_chunk($items, 50);
         $total = count($chunks);
         log_message('info', ucfirst($type) . " Payload Total: {$total}" );
 
         $i = 1;
         foreach ($chunks as $chunk) {
-            $payload = [$type => $chunk]; // Zorg dat je per batch alleen het juiste type meestuurt
+			if ($type === 'update') {
+				// Bundelvelden eruit strippen
+				$clean_chunk = [];
+				foreach ($chunk as $item) {
+					$copy = $item;
+					unset($copy['bundled_items_delete'], $copy['bundled_items_add']);
+					$clean_chunk[] = $copy;
+				}
+				$payload = [$type => $clean_chunk];
+			} else {
+				$payload = [$type => $chunk];
+			}
 
-            try {
-                $response = $woocommerce->post('products/batch', $payload);
+			//log_message('DEBUG', json_encode($payload));
+			try {
+				$response = $woocommerce->post('products/batch', $payload);
 
-				//Update Product_map
+				// Update product_map (zelfde als bij jou nu)
 				if (isset($response->create)) {
 					foreach ($response->create as $created) {
 						$guid = $created->EcommerceProductGuid;
-
 						if ($guid) {
 							$GLOBALS['product_map'][$guid] = $created;
 						}
 					}
 				}
 
-                log_message('info', "Batch {$i} ({$type}) executed: " . json_encode(array_column($chunk, 'sku')));
-                //log_message('info', "Payload: " . json_encode($payload));
-                //log_message('info', "Response: " . json_encode($response));
-            } catch (Exception $e) {
-                log_message('error', "Batch {$i} ({$type}) failed: " . $e->getMessage());
-            }
+				log_message('info', "Batch {$i} ({$type}) executed: " . json_encode(array_column($chunk, 'sku')));
+			} catch (Exception $e) {
+				log_message('error', "Batch {$i} ({$type}) failed: " . $e->getMessage());
+			}
+			// 👉 Extra stap: bundelitems afhandelen NA batch update
+			if ($type === 'update') {
+				foreach ($chunk as $item) {
+					if (empty($item['id'])) continue;
 
-            $i++;
-        }
+					$has_delete = !empty($item['bundled_items_delete']) && is_array($item['bundled_items_delete']);
+					$has_add    = !empty($item['bundled_items_add']) && is_array($item['bundled_items_add']);
+
+					// Sla over als er niets te wijzigen is aan de bundel
+					if (!$has_delete && !$has_add) continue;
+
+					try {
+						if ($has_delete) {
+							$woocommerce->put("products/{$item['id']}", [
+								'bundled_items' => $item['bundled_items_delete']
+							]);
+							log_message('info', "Product {$item['id']} bundelitems verwijderd");
+						}
+
+						if ($has_add) {
+							$woocommerce->put("products/{$item['id']}", [
+								'bundled_items' => $item['bundled_items_add']
+							]);
+							log_message('info', "Product {$item['id']} bundelitems toegevoegd");
+						}
+					} catch (Exception $e) {
+						log_message('error', "Fout bij bundelupdate voor {$item['id']}: " . $e->getMessage());
+					}
+				}
+			}
+			$i++;
+		}
     }
 }
 // function flush_variation_batch($woocommerce, $product_id, $create, $update, $delete) {
@@ -967,6 +1081,208 @@ function get_active_action_price_data_from_xml($actionPricesXml) {
 
     return $best;
 }
+
+function save_missing_stock_products($products, $file_path) {
+    if (empty($products)) return;
+
+    // Bestaat het bestand al?
+    if (file_exists($file_path)) {
+        $xml = simplexml_load_file($file_path);
+    } else {
+        // Nieuw XML bestand aanmaken
+        $xml = new SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><StockExport xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"><ExportInfo><ExportDateTime></ExportDateTime><Type>Periodic</Type><ExportStarted>Manual</ExportStarted></ExportInfo><Products></Products></StockExport>');
+        $xml->ExportInfo->ExportDateTime = date('c'); // ISO 8601
+    }
+
+    $productsNode = $xml->Products;
+
+    // Verzamel bestaande GUIDs om duplicaten te voorkomen
+    $existing_guids = [];
+    foreach ($productsNode->Product as $existing_product) {
+        $existing_guids[] = (string)$existing_product->EcommerceProductGuid;
+    }
+
+    foreach ($products as $product) {
+        $guid = (string)$product->EcommerceProductGuid;
+        if (in_array($guid, $existing_guids)) {
+            continue; // sla duplicaat over
+        }
+
+        $existing_guids[] = $guid; // voeg toe aan array om latere duplicaten te blokkeren
+        $productNode = $productsNode->addChild('Product');
+
+        foreach ($product->children() as $child) {
+            $productNode->addChild($child->getName(), (string)$child);
+        }
+    }
+
+    $xml->asXML($file_path);
+	
+	log_message("INFO", "Saved " . count($products) . " missing products to {$file_path}");
+}
+
+// --------------------------
+// Functie: splits XML-bestanden > maxProductsPerFile
+// --------------------------
+function split_large_xml_files(array $files, string $dir, int $maxProductsPerFile = 500): void
+{
+    foreach ($files as $file) {
+        if (strtolower(pathinfo($file, PATHINFO_EXTENSION)) !== 'xml') {
+            continue;
+        }
+
+        // Kleine sanity-check: bestaat en leesbaar?
+        if (!is_readable($file)) {
+            echo "⚠️ Niet leesbaar: {$file}\n";
+            continue;
+        }
+
+        // 1) Haal root + ExportInfo met SimpleXML (klein, veilig in memory)
+        $rootName = 'ProductExport';
+        $nsAttrs  = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema"';
+        $exportInfoXml = '';
+        try {
+            $sx = @simplexml_load_file($file);
+            if ($sx instanceof SimpleXMLElement) {
+                $exportInfoXml = $sx->ExportInfo ? $sx->ExportInfo->asXML() : '';
+                // Bewaar originele namespaces als aanwezig
+                $dom = dom_import_simplexml($sx)->ownerDocument;
+                $rootEl = $dom->documentElement;
+                $rootName = $rootEl->tagName;
+                // verzamel xmlns-* attrs van het root element
+                $ns = [];
+                if ($rootEl->attributes) {
+                    foreach ($rootEl->attributes as $attr) {
+                        if (strpos($attr->nodeName, 'xmlns') === 0) {
+                            $ns[] = $attr->nodeName . '="' . $attr->nodeValue . '"';
+                        }
+                    }
+                }
+                if (!empty($ns)) {
+                    $nsAttrs = implode(' ', $ns);
+                }
+            }
+        } catch (Throwable $e) {
+            // Laat defaults staan
+        }
+
+        // 2) Stream met XMLReader en split per 500 <Product>-nodes
+        $reader = new XMLReader();
+        if (!$reader->open($file)) {
+            echo "⚠️ Kan niet openen met XMLReader: {$file}\n";
+            continue;
+        }
+
+        $partIndex = 0;
+        $inProducts = false;
+        $buffer = [];
+        $totalCount = 0;
+
+        // helper: schrijf een part-bestand
+        $write_part = function(array $productsXml) use ($file, $dir, $rootName, $nsAttrs, $exportInfoXml, &$partIndex, $maxProductsPerFile) {
+            if (empty($productsXml)) return null;
+            $partIndex++;
+            $basename = pathinfo($file, PATHINFO_FILENAME);
+            $out = "{$dir}/{$basename}_part_{$partIndex}.xml";
+
+            $xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+            $xml .= "<{$rootName} {$nsAttrs}>\n";
+            if (!empty($exportInfoXml)) {
+                $xml .= "  " . trim($exportInfoXml) . "\n";
+            }
+            $xml .= "  <Products>\n";
+            foreach ($productsXml as $px) {
+                // Zorg dat er exact één inspringing is (optioneel)
+                $xml .= "    " . trim($px) . "\n";
+            }
+            $xml .= "  </Products>\n";
+            $xml .= "</{$rootName}>\n";
+
+            file_put_contents($out, $xml);
+            echo "  → Aangemaakt: {$out} (" . count($productsXml) . " producten)\n";
+            return $out;
+        };
+
+        echo "Analyseren & splitsen: {$file}\n";
+
+        // Lees door het document
+        while ($reader->read()) {
+            // Detect <Products> sectie om iets sneller te zijn (optioneel)
+            if ($reader->nodeType === XMLReader::ELEMENT && $reader->name === 'Products') {
+                $inProducts = true;
+            }
+
+            // Elk <Product> ophalen
+            if ($reader->nodeType === XMLReader::ELEMENT && $reader->name === 'Product') {
+                $productXml = $reader->readOuterXML();
+                if ($productXml !== '') {
+                    $buffer[] = $productXml;
+                    $totalCount++;
+
+                    // Schrijf chunk wanneer vol
+                    if (count($buffer) >= $maxProductsPerFile) {
+                        $write_part($buffer);
+                        $buffer = [];
+                    }
+                }
+                // Skip de node die we net volledig lazen
+                continue;
+            }
+
+            // Sluiting </Products> (alle resterende buffer flushen)
+            if ($inProducts && $reader->nodeType === XMLReader::END_ELEMENT && $reader->name === 'Products') {
+                // einde products-sectie
+                $inProducts = false;
+            }
+        }
+
+        // Laatste rest
+        $lastCreated = null;
+        if (!empty($buffer)) {
+            $lastCreated = $write_part($buffer);
+            $buffer = [];
+        }
+
+        $reader->close();
+
+        // 3) Beslis: wel of niet gesplitst?
+        if ($totalCount === 0) {
+            echo "⚠️ Geen <Product>-nodes gevonden in: {$file}\n";
+            continue;
+        }
+
+        if ($totalCount <= $maxProductsPerFile) {
+            // we hebben hoogstens 1 part-bestand gemaakt -> dat is zinloos; verwijder dat part en houd origineel
+            if ($partIndex === 1) {
+                $basename = pathinfo($file, PATHINFO_FILENAME);
+                $single = "{$dir}/{$basename}_part_1.xml";
+                if (is_file($single)) {
+                    @unlink($single);
+                    echo "Niet gesplitst (slechts {$totalCount} producten) — part-bestand verwijderd, origineel behouden.\n";
+                } else {
+                    echo "Niet gesplitst (slechts {$totalCount} producten) — origineel behouden.\n";
+                }
+            } else {
+                echo "Niet gesplitst (slechts {$totalCount} producten) — origineel behouden.\n";
+            }
+            continue;
+        }
+
+        // 4) Alleen als er daadwerkelijk 2+ parts zijn: origineel verwijderen
+        if ($partIndex >= 2) {
+            if (@unlink($file)) {
+                echo "❌ Origineel verwijderd: {$file} (totaal producten: {$totalCount}, parts: {$partIndex})\n";
+            } else {
+                echo "⚠️ Kon origineel niet verwijderen: {$file}\n";
+            }
+        } else {
+            // Veiligheidsnet: als we om wat voor reden dan ook maar 1 part hebben terwijl totalCount > max,
+            // verwijder niets en laat een waarschuwing zien.
+            echo "⚠️ Onverwacht: slechts 1 part gemaakt bij {$totalCount} producten. Origineel NIET verwijderd.\n";
+        }
+    }
+}
+
 
 function log_message($levels, $msg) {
     if (!is_array($levels)) {
