@@ -1,15 +1,19 @@
 <?php
-if (file_exists(__DIR__ . '/import/Products.xml')) {
-	copy(__DIR__ . '/import/Products.xml', __DIR__ . '/tmp/products/Products_' . date('Y-m-d_H-i-s') . '.xml');
-	unlink(__DIR__ . '/import/Products.xml');
+$file = __DIR__ . '/import/Products.xml';
 
-	$script = __DIR__ . '/import_products.php';
-	$running = trim(shell_exec("pgrep -f " . escapeshellarg($script)));
+if (file_exists($file)) {
+	copy($file, __DIR__ . '/tmp/products/Products_' . date('Y-m-d_H-i-s') . '.xml');
+	unlink($file);
 
-	if ($running) {
-		error_log("Proces voor {$script} draait nog. Trigger overgeslagen.");
+	$checkCmd = "pgrep -f " . escapeshellarg('import_products.php') .
+		" | xargs -r ps -o cmd= -p | grep -v manual";
+
+	$runningAuto = trim(shell_exec($checkCmd));
+
+	if ($runningAuto) {
+		error_log("Automatisch import proces voor products draait al. Trigger overgeslagen.");
 	} else {
-		$cmd = 'php ' . escapeshellarg($script) . ' > /dev/null 2>&1 &';
+		$cmd = 'php ' . escapeshellarg(__DIR__ . '/import_products.php') . ' > /dev/null 2>&1 &';
 		exec($cmd);
 	}
 }

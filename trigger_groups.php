@@ -1,15 +1,19 @@
 <?php
-if (file_exists(__DIR__ . '/import/Groups.xml')) {
-	copy(__DIR__ . '/import/Groups.xml', __DIR__ . '/tmp/groups/Groups_' . date('Y-m-d_H-i-s') . '.xml');
-	unlink(__DIR__ . '/import/Groups.xml');
+$file = __DIR__ . '/import/Groups.xml';
 
-	$script = __DIR__ . '/import_groups.php';
-	$running = trim(shell_exec("pgrep -f " . escapeshellarg($script)));
+if (file_exists($file)) {
+	copy($file, __DIR__ . '/tmp/groups/Groups_' . date('Y-m-d_H-i-s') . '.xml');
+	unlink($file);
 
-	if ($running) {
-		error_log("Proces voor {$script} draait al. Trigger overgeslagen.");
+	$checkCmd = "pgrep -f " . escapeshellarg('import_groups.php') .
+		" | xargs -r ps -o cmd= -p | grep -v manual";
+
+	$runningAuto = trim(shell_exec($checkCmd));
+
+	if ($runningAuto) {
+		error_log("Automatisch import proces voor groups draait al. Trigger overgeslagen.");
 	} else {
-		$cmd = 'php ' . escapeshellarg($script) . ' > /dev/null 2>&1 &';
+		$cmd = 'php ' . escapeshellarg(__DIR__ . '/import_groups.php') . ' > /dev/null 2>&1 &';
 		exec($cmd);
 	}
 }
