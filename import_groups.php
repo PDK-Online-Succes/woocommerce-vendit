@@ -83,17 +83,20 @@ function process_category_batches($woocommerce, $groups, &$cached_guids, $attrib
 
 			if (!empty($parentGuid) && $parentGuid !== '00000000-0000-0000-0000-000000000000') {
 				if (!isset($parentMap[$parentGuid])) {
-					error_log(date('Y-m-d H:i:s') . "[SKIP] Parent with GUID {$parentGuid} not found for group {$guid}. Skipping import until parent exists.\r\n", 3, IMPORT_ERROR_LOG);
+					log_message('SKIP', "Parent with GUID {$parentGuid} not found for group {$guid}. Skipping import until parent exists.");
+
 					$skipped++;
 					continue;
 				}
 				$parentId = $parentMap[$parentGuid];
 			}
 
-			$data = build_category_data($group, $existingMap[$guid], $parentId, $attribute_cache);
+			$existing = $existingMap[$guid] ?? null;
 
-			if (isset($existingMap[$guid])) {
-				$current = $existingMap[$guid];
+			$data = build_category_data($group, $existing, $parentId, $attribute_cache);
+
+			if ($existing) {
+				$current = $existing;
 				if (json_encode($data) !== json_encode((array) $current)) {
 					$updates[] = ['id' => $current->id, 'data' => $data];
 				}
@@ -108,6 +111,7 @@ function process_category_batches($woocommerce, $groups, &$cached_guids, $attrib
 				$created += count($payload);
 			} catch (Exception $e) {
 				error_log(date('Y-m-d H:i:s') . "[ERROR][POST-BATCH] " . $e->getMessage() . "\r\n", 3, IMPORT_ERROR_LOG);
+				log_message('ERROR, POST-BATCH', $e->getMessage());
 			}
 		}
 
@@ -118,7 +122,7 @@ function process_category_batches($woocommerce, $groups, &$cached_guids, $attrib
 				$woocommerce->put("products/categories/{$item['id']}", $item['data']);
 				$updated++;
 			} catch (Exception $e) {
-				error_log(date('Y-m-d H:i:s') . "[ERROR][PUT] Update failed for ID {$item['id']}: " . $e->getMessage() . "\r\n", 3, IMPORT_ERROR_LOG);
+				log_message('ERROR,PUT', "[ERROR][PUT] Update failed for ID {$item['id']}: " . $e->getMessage() );
 			}
 		}
 	}
@@ -143,29 +147,29 @@ function cache_categories_by_group_guids($woocommerce, $guids, &$cache)
 			if (!isset($cache[$guid])) {
 				$cache[$guid] = $cat;
 			} else {
-				error_log(date('Y-m-d H:i:s') . "[WARNING] Duplicate GroupGuid in cache set: $guid (existing ID: {$cache[$guid]->id}, new ID: {$cat->id})\r\n", 3, IMPORT_ERROR_LOG);
+				log_message('WARNING',"Duplicate GroupGuid in cache set: $guid (existing ID: {$cache[$guid]->id}, new ID: {$cat->id})");
 			}
 		}
 	} catch (Exception $e) {
-		error_log(date('Y-m-d H:i:s') . "[ERROR][GET] Batch category fetch failed: " . $e->getMessage() . "\r\n", 3, IMPORT_ERROR_LOG);
+		log_message( 'ERROR,GET', "Batch category fetch failed: " . $e->getMessage() );
 	}
 }
 
 function build_category_data($xml, $existingMap, $parent_id = 0, $attribute_cache = [])
 {
-	//var_dump($existingMap);
-	//die();
+	$ignoreSEO = !empty($existing?->IgnoreVenditGroupSEO);
+    $ignoreURL = !empty($existing?->IgnoreVenditGroupURL);
 	$data = array_filter([
-		'name' => (!empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupName->__toString() ?? '')),
-		'slug' => (!empty($existingMap->IgnoreVenditGroupURL) ? '' : sanitize_text($xml->GroupUrlName->__toString() ?? '')),
-		'parent' => $parent_id ?: 0,
-		'description' => (!empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_html($xml->GroupDescription->__toString() ?? '')),
-		'menu_order' => (int) ($xml->ItemOrder->__toString() ?? 0),
-		'rank_math_title' => (!empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupMetaTitle->__toString() ?? '')),
-		'rank_math_focus_keyword' => (!empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupMetaKeywords->__toString() ?? '')),
-		'rank_math_description' => (!empty($existingMap->IgnoreVenditGroupSEO) ? '' : sanitize_text($xml->GroupMetaDescription->__toString() ?? '')),
-		'group_guid' => sanitize_text($xml->GroupGuid->__toString() ?? '')
-	]);
+        'name' => ($ignoreSEO ? '' : sanitize_text($xml->GroupName->__toString() ?? '')),
+        'slug' => ($ignoreURL ? '' : sanitize_text($xml->GroupUrlName->__toString() ?? '')),
+        'parent' => $parent_id ?: 0,
+        'description' => ($ignoreSEO ? '' : sanitize_html($xml->GroupDescription->__toString() ?? '')),
+        'menu_order' => (int) ($xml->ItemOrder->__toString() ?? 0),
+        'rank_math_title' => ($ignoreSEO ? '' : sanitize_text($xml->GroupMetaTitle->__toString() ?? '')),
+        'rank_math_focus_keyword' => ($ignoreSEO ? '' : sanitize_text($xml->GroupMetaKeywords->__toString() ?? '')),
+        'rank_math_description' => ($ignoreSEO ? '' : sanitize_text($xml->GroupMetaDescription->__toString() ?? '')),
+        'group_guid' => sanitize_text($xml->GroupGuid->__toString() ?? '')
+    ]);
 
 	if ($xml->Specs) {
 		foreach ($xml->Specs->Spec as $spec) {
