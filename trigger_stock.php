@@ -8,7 +8,7 @@ if (file_exists($file)) {
 	$checkCmd = "pgrep -f " . escapeshellarg('update_stock.php') .
 		" | xargs -r ps -o cmd= -p | grep -v manual";
 
-	$runningAuto = trim(shell_exec($checkCmd));
+	$runningAuto = trim(shell_exec($checkCmd) ?? '');
 
 	if ($runningAuto) {
 		error_log("Automatisch stock proces draait al. Trigger overgeslagen.");

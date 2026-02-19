@@ -9,12 +9,12 @@ use Automattic\WooCommerce\Client;
 include_once __DIR__ . '/includes/functions.php';
 include_once __DIR__ . '/includes/sanitization.php';
 
-//$dotenv = Dotenv::createImmutable(dirname(__DIR__));
-$dotenv = Dotenv::createImmutable(__DIR__);
+$dotenv = Dotenv::createImmutable(dirname(__DIR__));
+//$dotenv = Dotenv::createImmutable(__DIR__);
 $dotenv->load();
 
 $error_path = dirname(__DIR__);
-define('IMPORT_ERROR_LOG', (string) $error_path . '/dev.vendit.log');
+define('IMPORT_ERROR_LOG', (string) $error_path . '/vendit.log');
 
 // Custom Dotenv Boolean Support
 if (!function_exists('evalBool')) {

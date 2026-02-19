@@ -16,6 +16,7 @@ if ((isset($options['a']) && $options['a'] === 'manual') || (isset($options['act
 
 // Bestanden ophalen
 $files = recursive_scan_dir($dir);
+if(!$files) exit();
 
 // Opties instellen
 if ((isset($options['o']) && $options['o'] === 'only_variations') || (isset($options['options']) && $options['options'] === 'only_variations')) {
@@ -60,7 +61,7 @@ log_message('INFO', 'Starting prescan for brands/attributes/terms');
 $brand_cache = build_brand_cache($woocommerce);
 $attribute_cache = build_attribute_cache($woocommerce);
 $term_cache = build_term_cache($woocommerce, $attribute_cache);
-$category_cache = build_category_cache($woocommerce);
+//$category_cache = build_category_cache($woocommerce);
 
 // 2) Pre-scan XML voor de queues (alleen brands/attributes/terms verzamelen)
 foreach ($files as $file) {
@@ -136,6 +137,9 @@ $GLOBALS['batch_create_attributes'] = [];
 //log_message('DEBUG', 'Terms: '. json_encode($GLOBALS['batch_create_terms'],JSON_PRETTY_PRINT));
 flush_create_terms($woocommerce, $GLOBALS['batch_create_terms']);
 $GLOBALS['batch_create_terms'] = [];
+$brand_cache = [];
+$attribute_cache = [];
+$term_cache = [];
 
 gc_collect_cycles();
 
@@ -143,8 +147,12 @@ gc_collect_cycles();
 $brand_cache = build_brand_cache($woocommerce);
 $attribute_cache = build_attribute_cache($woocommerce);
 $term_cache = build_term_cache($woocommerce, $attribute_cache);
+$category_cache = build_category_cache($woocommerce);
 
 log_message('INFO', 'Prescan complete, starting product import…');
+
+//log_message('DEBUG', 'Attribute Cache: '. json_encode($attribute_cache, JSON_PRETTY_PRINT));
+//log_message('DEBUG', 'Term Cache: '. json_encode($term_cache, JSON_PRETTY_PRINT));
 
 global $product_map;
 
@@ -162,6 +170,21 @@ foreach ($files as $file_index => $file) {
 	$product_guids = [];
 	foreach ($xml->Products->Product as $item) {
 		$product_guids[] = (string) $item->EcommerceProductGuid;
+
+		 /** SimilarProducts */
+		if (isset($item->SimilarProducts->SimilarProduct)) {
+			foreach ($item->SimilarProducts->SimilarProduct as $sim) {
+				$product_guids[] = (string)$sim;
+			}
+		}
+
+		/** Accessories */
+		if (isset($item->Accessories->AccessoryProduct)) {
+			foreach ($item->Accessories->AccessoryProduct as $acc) {
+				$product_guids[] = (string)$acc;
+			}
+		}
+
 	}
 	$product_map = get_products_by_guids_batch($woocommerce, array_unique($product_guids));
 
@@ -199,7 +222,6 @@ foreach ($files as $file_index => $file) {
 	unset($xml);
 	gc_collect_cycles();
 }
-
 
 function process_products_from_xml($woocommerce, $xml, $product_map, &$attribute_cache, &$term_cache, &$brand_cache, &$category_cache)
 {
@@ -296,12 +318,9 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 			}
 		}
 	}
-	//log_message('DEBUG', 'XML BRAND: '.$brand_name);
-	//log_message('DEBUG', 'BRAND CACHE: '.json_encode($brand_cache,JSON_PRETTY_PRINT));
+
 	$brand = get_brand_cached($brand_name, $brand_cache, $GLOBALS['batch_create_brands']);
-	//$brand_id = $brand->id ?? null;
 	$brand_id = $brand?->id;
-	//log_message('DEBUG', 'BRAND CACHED: '.json_encode($brand,JSON_PRETTY_PRINT));
 
 	$attr_data = extract_attributes_from_spec_and_variation(
 		$xml,
@@ -310,6 +329,7 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 		$attribute_cache,
 		$term_cache
 	);
+	//log_message('DEBUG', "Product_attr: ".json_encode($attr_data, JSON_PRETTY_PRINT));
 
 	$all_attributes = array_merge(
 		$attr_data['attributes'] ?? [],
@@ -348,6 +368,63 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 		$product_data['attributes'] = $all_attributes;
 	}
 
+	/** ============================================================
+	 *  SimilarProducts  →  upsell_ids
+	 * ============================================================ */
+	$upsell_ids = [];
+
+	if (isset($xml->SimilarProducts->SimilarProduct)) {
+		foreach ($xml->SimilarProducts->SimilarProduct as $similar_xml) {
+			//log_message('DEBUG', json_encode($similar_xml,JSON_PRETTY_PRINT));
+			$similar_guid = (string)$similar_xml;
+
+			$upsell_product = $product_map[$similar_guid] ?? null;
+			if ($upsell_product && isset($upsell_product->id)) {
+				$upsell_ids[] = (int)$upsell_product->id;
+			}
+		}
+	}
+	//log_message('DEBUG', json_encode($upsell_ids,JSON_PRETTY_PRINT));
+	if (!empty($upsell_ids)) {
+		$product_data['upsell_ids'] = $upsell_ids;
+	}
+	//log_message('DEBUG', json_encode($product_data['upsell_ids'],JSON_PRETTY_PRINT));
+	/** ============================================================
+	 *  Accessories  →  cross_sell_ids (met ItemOrder sortering)
+	 * ============================================================ */
+	$cross_sell_items = [];
+
+	if (isset($xml->Accessories->AccessoryProduct)) {
+		foreach ($xml->Accessories->AccessoryProduct as $accessory_xml) {
+			//log_message('DEBUG', json_encode($accessory_xml,JSON_PRETTY_PRINT));
+			$accessory_guid = (string)$accessory_xml;
+
+			// ItemOrder uit attribuut, fallback = 9999
+			$order = isset($accessory_xml['ItemOrder'])
+				? (int)$accessory_xml['ItemOrder']
+				: 9999;
+
+			$cross_sell_product = $product_map[$accessory_guid] ?? null;
+
+			if ($cross_sell_product && isset($cross_sell_product->id)) {
+				$cross_sell_items[] = [
+					'order' => $order,
+					'id'    => (int)$cross_sell_product->id
+				];
+			}
+		}
+	}
+	//log_message('DEBUG', json_encode($cross_sell_items,JSON_PRETTY_PRINT));
+
+	if (!empty($cross_sell_items)) {
+		usort($cross_sell_items, function($a, $b) {
+			return $a['order'] <=> $b['order'];
+		});
+
+		$product_data['cross_sell_ids'] = array_column($cross_sell_items, 'id');
+	}
+	//log_message('DEBUG', json_encode($product_data['cross_sell_ids'],JSON_PRETTY_PRINT));
+
 	// Simple product
 	if ($type === 'simple' && isset($xml->ProductVariations->ProductVariation)) {
 		$variation = $xml->ProductVariations->ProductVariation;
@@ -377,17 +454,6 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 
 		$product_data['sku'] = $sku;
 		$product_data['ProductId'] = $product_id;
-
-		// if (empty($images)) {
-		// 	// Try to take first variation image
-		// 	if (isset($xml->ProductVariations->ProductVariation->Images->Image)) {
-		// 		$firstImage = $xml->ProductVariations->ProductVariation->Images->Image[0];
-		// 		$img = get_images($firstImage);
-		// 		if ($img !== null) {
-		// 			$images = [$img];
-		// 		}
-		// 	}
-		// }
 	}
 
 	// Bundle product
@@ -443,12 +509,12 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 
 			// Check of bestaande bundel afwijkt
 			$existing_bundle = $existing->bundled_items ?? [];
-			$changed_bundle = count($bundled_items) !== count($existing_bundle);
+			$changed_bundle = count($bundled_items) != count($existing_bundle);
 
 			if (!$changed_bundle) {
 				foreach ($bundled_items as $i => $new_item) {
 					$old = $existing_bundle[$i] ?? null;
-					if (!$old || $old->product_id != $new_item['product_id']) {
+					if (!$old || (int)$old->product_id !== (int)$new_item['product_id']) {
 						$changed_bundle = true;
 						break;
 					}
@@ -479,7 +545,7 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 	if ($existing) {
 		$changed = false;
 
-		if ($changed_bundle)
+		if (isset($changed_bundle) && $changed_bundle)
 			$changed = true;
 
 		// Vergelijking op een aantal hoofdvelden
@@ -548,7 +614,7 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 		$product_data['stock_status'] = 'outofstock';
 		$product_data['backorders'] = 'no';
 	}
-
+	//log_message('DEBUG', 'Product Data: '.json_encode($product_data, JSON_PRETTY_PRINT));
 	return $product_data;
 }
 
@@ -708,11 +774,14 @@ function build_variation_batch_payload($product_id, $product_xml, $existing_vari
 			$delete[] = ['id' => $variation->id];
 		}
 	}
-
-	return [
+	$batch = [
 		'product_id' => $product_id,
 		'create' => $create,
 		'update' => $update,
 		'delete' => $delete
 	];
+
+	log_message('DEBUG', 'Variation Batch: '.json_encode($batch, JSON_PRETTY_PRINT));
+
+	return $batch;
 }

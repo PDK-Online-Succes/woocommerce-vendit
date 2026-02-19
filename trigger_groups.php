@@ -8,7 +8,7 @@ if (file_exists($file)) {
 	$checkCmd = "pgrep -f " . escapeshellarg('import_groups.php') .
 		" | xargs -r ps -o cmd= -p | grep -v manual";
 
-	$runningAuto = trim(shell_exec($checkCmd));
+	$runningAuto = trim(shell_exec($checkCmd) ?? '');
 
 	if ($runningAuto) {
 		error_log("Automatisch import proces voor groups draait al. Trigger overgeslagen.");

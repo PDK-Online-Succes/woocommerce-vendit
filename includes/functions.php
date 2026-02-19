@@ -356,9 +356,9 @@ function queue_create_brand($name, &$queue)
 
 function queue_create_attribute($name, &$queue)
 {
-	$slug = 'pa_' . sanitize_slug($name);
+	$slug = 'pa_' . sanitize_slug(trim($name));
 	$queue[$slug] = [
-		'name' => $name,
+		'name' => trim($name),
 		'slug' => $slug,
 		'type' => 'select',
 		'order_by' => 'menu_order',
@@ -368,15 +368,16 @@ function queue_create_attribute($name, &$queue)
 
 function queue_create_term($attr_id, $term_name, &$queue)
 {
-	$slug = sanitize_slug($term_name);
-	$queue[$attr_id][$slug] = ['name' => $term_name, 'slug' => $slug];
+	$slug = sanitize_slug(trim($term_name));
+	$queue[$attr_id][$slug] = ['name' => trim($term_name), 'slug' => $slug];
 }
 
 // Batch flushers (in sets van 100)
 function flush_create_brands($woocommerce, &$queue)
 {
-	if (empty($queue))
+	if (empty($queue)){
 		return;
+	}
 	$chunks = array_chunk(array_values($queue), 100);
 	foreach ($chunks as $chunk) {
 		try {
@@ -391,8 +392,9 @@ function flush_create_brands($woocommerce, &$queue)
 
 function flush_create_attributes($woocommerce, &$queue)
 {
-	if (empty($queue))
+	if (empty($queue)){
 		return;
+	}
 	$chunks = array_chunk(array_values($queue), 100);
 	foreach ($chunks as $chunk) {
 		try {
@@ -408,8 +410,9 @@ function flush_create_attributes($woocommerce, &$queue)
 function flush_create_terms($woocommerce, &$queue)
 {
 	foreach ($queue as $attr_id => $terms) {
-		if (empty($terms))
+		if (empty($terms)){
 			continue;
+		}
 		$chunks = array_chunk(array_values($terms), 100);
 		foreach ($chunks as $chunk) {
 			try {
@@ -426,8 +429,9 @@ function flush_create_terms($woocommerce, &$queue)
 function get_brand_cached($brand_name, &$brand_cache, &$batch_create_brands)
 {
 	$key = strtolower(htmlspecialchars(trim($brand_name)));
-	if (isset($brand_cache[$key]))
+	if (isset($brand_cache[$key])){
 		return $brand_cache[$key];
+	}
 	queue_create_brand(trim($brand_name), $batch_create_brands);
 	return null;
 }
@@ -435,8 +439,9 @@ function get_brand_cached($brand_name, &$brand_cache, &$batch_create_brands)
 function get_or_create_attribute_cached($name, &$attribute_cache, &$batch_create_attributes)
 {
 	$key = strtolower($name);
-	if (isset($attribute_cache[$key]))
+	if (isset($attribute_cache[$key])){
 		return $attribute_cache[$key];
+	}
 	queue_create_attribute($name, $batch_create_attributes);
 	return null;
 }
@@ -444,15 +449,15 @@ function get_or_create_attribute_cached($name, &$attribute_cache, &$batch_create
 function get_or_create_term_cached($attr_id, $term_name, &$term_cache, &$batch_create_terms)
 {
 	$key = strtolower($term_name);
-	if (isset($term_cache[$attr_id][$key]))
+	if (isset($term_cache[$attr_id][$key])){
 		return $term_cache[$attr_id][$key];
+	}
 	queue_create_term($attr_id, $term_name, $batch_create_terms);
 	return null;
 }
 function map_attribute_name($original_name, $primary_category_name)
 {
 	$name = strtolower(trim($original_name));
-	//log_message('CAT', json_encode($primary_category_name, JSON_PRETTY_PRINT));
 	$category = strtolower(trim($primary_category_name));
 
 	// Define attribute renaming rules
@@ -512,12 +517,14 @@ function map_attribute_name($original_name, $primary_category_name)
 
 	// Global attribute mapping (e.g. color)
 	if (isset($attribute_map[$name]) && is_string($attribute_map[$name])) {
+		//log_message('DEBUG', 'Attribute map: '.json_encode($attribute_map[$name], JSON_PRETTY_PRINT));
 		return $attribute_map[$name];
 	}
 
 	// Category-based mapping (e.g. size)
 	if (isset($attribute_map[$name]) && is_array($attribute_map[$name])) {
 		if (isset($attribute_map[$name][$category])) {
+			//log_message('DEBUG', 'Attribute map: '.json_encode($attribute_map[$name][$category], JSON_PRETTY_PRINT));
 			return $attribute_map[$name][$category];
 		}
 
@@ -657,7 +664,7 @@ function build_variation_attributes_from_xml($variation_xml, $primary_category_n
 {
 	$variation_attributes = [];
 
-	if (!$variation_xml->Attributes) {
+	if (!isset($variation_xml->Attributes->Attribute)) {
 		return $variation_attributes;
 	}
 
@@ -774,7 +781,7 @@ function extract_attributes_from_spec_and_variation($xml, $type, $primary_cat_na
 	$attributes = [];
 	$variation_attributes_map = [];
 
-	// 📌 1. Specs -> Spec
+	// 1. Specs -> Spec
 	if (isset($xml->Specs->Spec)) {
 		foreach ($xml->Specs->Spec as $spec) {
 			$raw_name = (string) $spec->Name;
@@ -812,7 +819,7 @@ function extract_attributes_from_spec_and_variation($xml, $type, $primary_cat_na
 		}
 	}
 
-	// 📌 2. Attributes uit 1e variatie (simple/bundle)
+	// 2. Attributes uit 1e variatie (simple/bundle)
 	if ($type === 'simple' || $type === 'bundle') {
 		$variation = $xml->ProductVariations->ProductVariation ?? null;
 		if ($variation && isset($variation->Attributes->Attribute)) {
@@ -853,7 +860,91 @@ function extract_attributes_from_spec_and_variation($xml, $type, $primary_cat_na
 		}
 	}
 
-	// 📌 3. Variation-attributen verzamelen voor variable hoofdproduct
+	// 2b. Attributes uit ProductVariation->Attributes
+	if (isset($xml->ProductVariations->ProductVariation)) {
+
+		$parent_attribute_values = [];
+
+		foreach ($xml->ProductVariations->ProductVariation as $variation) {
+
+			if (!isset($variation->Attributes->Attribute)) {
+				continue;
+			}
+
+			foreach ($variation->Attributes->Attribute as $attr) {
+
+				$raw_name = trim((string) $attr->Name);
+				$option   = trim((string) $attr->Value);
+
+				if ($raw_name === '' || $option === '') {
+					continue;
+				}
+
+				$mapped_name = map_attribute_name($raw_name, $primary_cat_name);
+
+				$attribute_obj = get_or_create_attribute_cached(
+					$mapped_name,
+					$attribute_cache,
+					$GLOBALS['batch_create_attributes']
+				);
+
+				if (!$attribute_obj || empty($attribute_obj->id)) {
+					continue;
+				}
+
+				$attr_id = $attribute_obj->id;
+
+				/** 1️⃣ Variatie-attribuut (identiek aan variable) */
+				if (!isset($variation_attributes_map[$attr_id])) {
+					$variation_attributes_map[$attr_id] = [
+						'id'        => $attr_id,
+						'variation' => true,
+						'visible'   => true,
+						'options'   => []
+					];
+				}
+
+				if (!in_array($option, $variation_attributes_map[$attr_id]['options'], true)) {
+					$variation_attributes_map[$attr_id]['options'][] = $option;
+				}
+
+				/** 2️⃣ Parent-attribuut */
+				$parent_attribute_values[$attr_id][] = $option;
+			}
+		}
+
+		/** 3️⃣ Parent attributes vullen (zelfde patroon als specs) */
+		foreach ($parent_attribute_values as $attribute_id => $values) {
+
+			$options = [];
+
+			foreach (array_unique($values) as $val) {
+				if ($val === '') continue;
+
+				$term = get_or_create_term_cached(
+					$attribute_id,
+					$val,
+					$term_cache,
+					$GLOBALS['batch_create_terms']
+				);
+
+				if ($term) {
+					$options[] = $term->name;
+				}
+			}
+
+			if (!empty($options)) {
+				$attributes[] = [
+					'id'        => $attribute_id,
+					'variation' => false,
+					'visible'   => true,
+					'options'   => $options
+				];
+			}
+		}
+	}
+
+	// 3. Variation-attributen verzamelen voor variable hoofdproduct
 	if ($type === 'variable') {
 		foreach ($xml->ProductVariations->ProductVariation as $variation) {
 			if ((string) $variation->IsDeleted === 'true')
@@ -993,6 +1084,78 @@ function flush_product_batches($woocommerce, &$product_map, &$create, &$update, 
 						$guid = $created->EcommerceProductGuid;
 						if ($guid) {
 							$GLOBALS['product_map'][$guid] = $created;
+						}
+					}
+				}
+
+				/**
+				 * ✅ EXTRA: Post-create image update
+				 * Omdat images bij create soms niet goed worden geïmporteerd, doen we direct daarna een update met alleen images.
+				 */
+				if ($type === 'create' && isset($response->create) && !empty($response->create)) {
+
+					// Indexeer originele create chunk op GUID zodat we images snel kunnen terugvinden
+					$origByGuid = [];
+					foreach ($chunk as $origItem) {
+						if (!empty($origItem['EcommerceProductGuid'])) {
+							$origByGuid[$origItem['EcommerceProductGuid']] = $origItem;
+						}
+					}
+
+					$imageUpdates = [];
+
+					foreach ($response->create as $created) {
+						$guid = $created->EcommerceProductGuid ?? null;
+						$newId = $created->id ?? null;
+
+						if (!$guid || !$newId) continue;
+						if (empty($origByGuid[$guid])) continue;
+
+						$origImages = $origByGuid[$guid]['images'] ?? [];
+						if (empty($origImages)) continue;
+
+						// (Optioneel maar handig) Als er tóch al images zijn aangemaakt, verwijder media eerst om duplicaten te voorkomen
+						try {
+							$fresh = $woocommerce->get("products/{$newId}");
+							if (!empty($fresh->images)) {
+								foreach ($fresh->images as $img) {
+									if (!empty($img->id)) {
+										delete_media_item($img->id);
+									}
+								}
+							}
+						} catch (Exception $e) {
+							log_message(['ERROR', 'GET'], "Post-create image cleanup failed for product {$newId}: " . $e->getMessage());
+						}
+
+						// Update payload: alleen id + images (simpel houden)
+						$imageUpdates[] = [
+							'id'     => (int) $newId,
+							'images' => $origImages,
+						];
+					}
+
+					if (!empty($imageUpdates)) {
+						// Batch update in chunks (zelfde limiet als elders)
+						$imageChunks = array_chunk($imageUpdates, 50);
+						foreach ($imageChunks as $idx => $imgChunk) {
+							try {
+								$imgResp = $woocommerce->post('products/batch', ['update' => $imgChunk]);
+
+								// product_map verversen met update-resultaten (optioneel maar fijn)
+								if (isset($imgResp->update)) {
+									foreach ($imgResp->update as $updated) {
+										$ug = $updated->EcommerceProductGuid ?? null;
+										if ($ug) {
+											$GLOBALS['product_map'][$ug] = $updated;
+										}
+									}
+								}
+
+								log_message('info', "Post-create image update batch executed (" . ($idx + 1) . "): " . count($imgChunk) . " products");
+							} catch (Exception $e) {
+								log_message('error', "Post-create image update batch failed: " . $e->getMessage());
+							}
 						}
 					}
 				}
