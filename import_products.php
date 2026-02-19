@@ -61,7 +61,6 @@ log_message('INFO', 'Starting prescan for brands/attributes/terms');
 $brand_cache = build_brand_cache($woocommerce);
 $attribute_cache = build_attribute_cache($woocommerce);
 $term_cache = build_term_cache($woocommerce, $attribute_cache);
-//$category_cache = build_category_cache($woocommerce);
 
 // 2) Pre-scan XML voor de queues (alleen brands/attributes/terms verzamelen)
 foreach ($files as $file) {
