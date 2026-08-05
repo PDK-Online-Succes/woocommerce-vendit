@@ -155,10 +155,10 @@ function cache_categories_by_group_guids($woocommerce, $guids, &$cache)
 	}
 }
 
-function build_category_data($xml, $existingMap, $parent_id = 0, $attribute_cache = [])
+function build_category_data($xml, $existing, $parent_id = 0, $attribute_cache = [])
 {
-	$ignoreSEO = !empty($existing?->IgnoreVenditGroupSEO);
-    $ignoreURL = !empty($existing?->IgnoreVenditGroupURL);
+	$ignoreSEO = !empty($existing->IgnoreVenditGroupSEO);
+    $ignoreURL = !empty($existing->IgnoreVenditGroupURL);
 	$data = array_filter([
         'name' => ($ignoreSEO ? '' : sanitize_text($xml->GroupName->__toString() ?? '')),
         'slug' => ($ignoreURL ? '' : sanitize_text($xml->GroupUrlName->__toString() ?? '')),

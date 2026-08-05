@@ -343,7 +343,7 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 		'featured' => $featured,
 		'status' => (strtolower((string) $xml->Visible) === 'true') ? 'publish' : 'draft',
 		'categories' => $categories,
-		'images' => $images ?: [],
+		'images' => $images ?? [],
 		'sku' => ($type === 'variable') ? $product_number : null,
 		'EcommerceProductGuid' => $guid,
 		'ProductNumber' => $product_number,
@@ -569,17 +569,33 @@ function build_product_payload($xml, $type, &$product_map, &$attribute_cache, &$
 		if ($existing->rank_math_description !== $product_data['rank_math_description'])
 			$changed = true;
 
-		//if (images_changed($existing->images ?? [], $product_data['images'])) $changed = true;
-
-		if (images_changed($existing->images ?? [], $product_data['images'])) {
-			// Verwijder oude media
-			foreach ($existing->images as $img) {
-				if (isset($img->id)) {
-					delete_media_item($img->id);
+		if ($images === null) {
+			// null → geen <Image>-elementen in de XML: Vendit heeft de afbeeldingen verwijderd.
+			// Stuur images: [] zodat WooCommerce de bestaande afbeeldingen ook verwijdert.
+			$product_data['images'] = [];
+			if (!empty($existing->images)) {
+				foreach ($existing->images as $img) {
+					if (isset($img->id)) {
+						delete_media_item($img->id);
+					}
 				}
+				$changed = true;
 			}
-			$changed = true;
-			// Vervang door nieuwe afbeeldingen (zitten al in $product_data['images'])
+		} elseif (!empty($images)) {
+			// Opgeloste afbeeldingen beschikbaar → vergelijk en werk bij indien gewijzigd.
+			if (images_changed($existing->images ?? [], $images)) {
+				foreach ($existing->images ?? [] as $img) {
+					if (isset($img->id)) {
+						delete_media_item($img->id);
+					}
+				}
+				$changed = true;
+			}
+		} else {
+			// [] → <Image>-elementen aanwezig in XML maar bestanden niet gevonden.
+			// Tijdelijk niet beschikbaar: bestaande afbeeldingen ongemoeid laten.
+			unset($product_data['images']);
+			log_message('INFO', "Product {$guid}: afbeeldingen overgeslagen (bestanden niet beschikbaar), bestaande afbeeldingen behouden.");
 		}
 
 		// ➕ Prijsvelden meenemen in vergelijking (belangrijk voor simple/bundle)
@@ -703,7 +719,10 @@ function build_variation_batch_payload($product_id, $product_xml, $existing_vari
 
 		if (isset($var_xml->Images->Image)) {
 			foreach ($var_xml->Images->Image as $img) {
-				$variation_data['image'] = get_images($img);
+				$image = get_images($img);
+				if ($image !== null) {
+					$variation_data['image'] = $image;
+				}
 				break;
 			}
 		}

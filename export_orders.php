@@ -14,7 +14,8 @@ do {
     $params = [
         'after' => $modified_after,
         'per_page' => $per_page,
-        'page' => $page
+        'page' => $page,
+		'status' => 'processing,completed'
     ];
 
     try {
@@ -28,6 +29,10 @@ do {
 
         if ($orders) {
             foreach ($orders as $order) {
+				if (empty($order->date_paid)) {
+					log_message('INFO', "Skipping order #{$order->number} — not yet paid");
+					continue;
+				}
 
                 date_default_timezone_set('Europe/Amsterdam');
                 $dt = new DateTime();
@@ -54,7 +59,7 @@ do {
                 $orderNode->addChild('PaymentCosts', number_format($order->fee_total ?? 0, 4, '.', ''));
                 $orderNode->addChild('Paid', number_format($order->total, 4, '.', ''));
                 $orderNode->addChild('ShippingMethod', $order->shipping_lines[0]->method_title ?? '');
-                $orderNode->addChild('ShippingCosts', number_format($order->shipping_total ?? 0, 4, '.', ''));
+                $orderNode->addChild('ShippingCosts', number_format(($order->shipping_total + $order->shipping_tax) ?? 0, 4, '.', ''));
                 $orderNode->addChild('InvoiceDiscountAmount', number_format($order->discount_total ?? 0, 4, '.', ''));
 
                 // Billing (Invoice)
@@ -124,7 +129,7 @@ do {
                 $utf16le_string = mb_convert_encoding($xml_string, 'UTF-16LE', 'UTF-8');
                 $bom = "\xFF\xFE";
 
-                file_put_contents(__DIR__ . "/debug-xml/order-{$order_number}.xml", $bom . $utf16le_string);
+                //file_put_contents(__DIR__ . "/debug-xml/order-{$order_number}.xml", $bom . $utf16le_string);
 
                 $file_path = __DIR__ . "/export/orders/order-{$order_number}.xml";
                 file_put_contents($file_path, $bom . $utf16le_string);

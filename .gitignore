@@ -6,6 +6,9 @@ import/*
 export/*
 .vscode/*
 tmp/*
+llms/*
+graphify-out/*
+
 
 test.php
 old_import_products.php

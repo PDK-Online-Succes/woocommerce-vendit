@@ -576,23 +576,55 @@ function get_images($xml)
 	// Geen geldige afbeelding
 	return null;
 }
+/**
+ * Verzamelt afbeeldingen uit alle ProductVariation/Images/Image-elementen.
+ *
+ * Retourneert:
+ *   null  → geen <Image>-elementen in de XML (Vendit heeft de afbeelding(en) verwijderd)
+ *   []    → <Image>-elementen aanwezig maar geen enkel bestand gevonden (tijdelijk niet beschikbaar)
+ *   [...] → opgeloste afbeeldingen klaar voor de WooCommerce REST API-payload
+ */
 function get_combined_images_from_xml($xml)
 {
-	$images = [];
-
 	if (!isset($xml->ProductVariations->ProductVariation)) {
-		return $images;
+		return null;
 	}
+
+	$xmlImageCount = 0;
+	$images = [];
+	$skipped = 0;
 
 	foreach ($xml->ProductVariations->ProductVariation as $variation) {
 		if (isset($variation->Images->Image)) {
 			foreach ($variation->Images->Image as $img) {
+				// Lege <Image/>-elementen niet meetellenvooral bij 'no image' exports
+				if ((string) $img === '') {
+					continue;
+				}
+				$xmlImageCount++;
 				$image_data = get_images($img);
 				if ($image_data !== null) {
 					$images[] = $image_data;
+				} else {
+					$skipped++;
 				}
 			}
 		}
+	}
+
+	// Geen <Image>-elementen gevonden in de XML → Vendit heeft de afbeeldingen verwijderd
+	if ($xmlImageCount === 0) {
+		return null;
+	}
+
+	// <Image>-elementen aanwezig maar geen enkel bestand oplosbaar → tijdelijk niet beschikbaar
+	if (empty($images)) {
+		log_message('WARNING', "get_combined_images_from_xml: {$skipped} afbeelding(en) overgeslagen — bestanden niet gevonden in mediabibliotheek of lokaal bestandssysteem.");
+		return [];
+	}
+
+	if ($skipped > 0) {
+		log_message('WARNING', "get_combined_images_from_xml: {$skipped} van de " . ($xmlImageCount) . " afbeelding(en) niet oplosbaar.");
 	}
 
 	// Deduplicate by src or id
@@ -1094,32 +1126,35 @@ function flush_product_batches($woocommerce, &$product_map, &$create, &$update, 
 				 */
 				if ($type === 'create' && isset($response->create) && !empty($response->create)) {
 
-					// Indexeer originele create chunk op GUID zodat we images snel kunnen terugvinden
-					$origByGuid = [];
-					foreach ($chunk as $origItem) {
-						if (!empty($origItem['EcommerceProductGuid'])) {
-							$origByGuid[$origItem['EcommerceProductGuid']] = $origItem;
-						}
-					}
-
 					$imageUpdates = [];
 
-					foreach ($response->create as $created) {
-						$guid = $created->EcommerceProductGuid ?? null;
+					// Match op volgorde: WooCommerce retourneert create-resultaten in dezelfde volgorde als de request.
+					// Gebruik index-matching zodat we niet afhankelijk zijn van EcommerceProductGuid in de response.
+					foreach ($response->create as $idx => $created) {
 						$newId = $created->id ?? null;
+						$origItem = $chunk[$idx] ?? null;
 
-						if (!$guid || !$newId) continue;
-						if (empty($origByGuid[$guid])) continue;
+						if (!$newId || !$origItem) {
+							log_message('info', "Post-create image: geen match op index {$idx}, overgeslagen.");
+							continue;
+						}
 
-						$origImages = $origByGuid[$guid]['images'] ?? [];
-						if (empty($origImages)) continue;
+						$origImages = $origItem['images'] ?? [];
+						if (empty($origImages)) {
+							log_message('info', "Post-create image: product ID {$newId} heeft geen afbeeldingen in payload, overgeslagen.");
+							continue;
+						}
 
-						// (Optioneel maar handig) Als er tóch al images zijn aangemaakt, verwijder media eerst om duplicaten te voorkomen
+						// IDs uit de originele payload — dit zijn pre-existing mediabestanden die NIET verwijderd mogen worden
+						$origImageIds = array_filter(array_column($origImages, 'id'));
+
+						// Verwijder alleen media die WooCommerce NIEUW aanmaakte tijdens de batch-create (niet de pre-existing).
+						// Zo voorkomen we duplicaten zonder bestaande media te verwijderen.
 						try {
 							$fresh = $woocommerce->get("products/{$newId}");
 							if (!empty($fresh->images)) {
 								foreach ($fresh->images as $img) {
-									if (!empty($img->id)) {
+									if (!empty($img->id) && !in_array($img->id, $origImageIds)) {
 										delete_media_item($img->id);
 									}
 								}
@@ -1128,7 +1163,6 @@ function flush_product_batches($woocommerce, &$product_map, &$create, &$update, 
 							log_message(['ERROR', 'GET'], "Post-create image cleanup failed for product {$newId}: " . $e->getMessage());
 						}
 
-						// Update payload: alleen id + images (simpel houden)
 						$imageUpdates[] = [
 							'id'     => (int) $newId,
 							'images' => $origImages,
@@ -1136,27 +1170,31 @@ function flush_product_batches($woocommerce, &$product_map, &$create, &$update, 
 					}
 
 					if (!empty($imageUpdates)) {
-						// Batch update in chunks (zelfde limiet als elders)
 						$imageChunks = array_chunk($imageUpdates, 50);
-						foreach ($imageChunks as $idx => $imgChunk) {
+						foreach ($imageChunks as $batchIdx => $imgChunk) {
 							try {
 								$imgResp = $woocommerce->post('products/batch', ['update' => $imgChunk]);
 
-								// product_map verversen met update-resultaten (optioneel maar fijn)
 								if (isset($imgResp->update)) {
 									foreach ($imgResp->update as $updated) {
 										$ug = $updated->EcommerceProductGuid ?? null;
 										if ($ug) {
 											$GLOBALS['product_map'][$ug] = $updated;
 										}
+
+										// Log of afbeeldingen daadwerkelijk zijn gekoppeld
+										$attachedCount = count($updated->images ?? []);
+										log_message('info', "Post-create image update product {$updated->id}: {$attachedCount} afbeelding(en) gekoppeld.");
 									}
 								}
 
-								log_message('info', "Post-create image update batch executed (" . ($idx + 1) . "): " . count($imgChunk) . " products");
+								log_message('info', "Post-create image update batch uitgevoerd (" . ($batchIdx + 1) . "): " . count($imgChunk) . " producten");
 							} catch (Exception $e) {
-								log_message('error', "Post-create image update batch failed: " . $e->getMessage());
+								log_message('error', "Post-create image update batch mislukt: " . $e->getMessage());
 							}
 						}
+					} else {
+						log_message('info', "Post-create image update: geen producten met afbeeldingen om bij te werken.");
 					}
 				}
 
